@@ -8,18 +8,24 @@ from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
 import io
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES DE FORMATAÇÃO (AJUSTE FINO) ---
 def modelo_logaritmico(x, a, b):
     return a * np.log(x) + b
 
-def format_numero(valor):
+def format_padrao(valor):
+    """Para valores gerais (2 casas)"""
     if valor is None: return "-"
     return f"{valor:.2f}".replace('.', ',')
 
-def format_cientifico(valor):
+def format_transmissividade(valor):
+    """9 casas decimais, sem notação científica"""
     if valor is None: return "-"
-    # Formatação científica segura
-    return f"{valor:.2e}".replace('.', ',')
+    return f"{valor:.9f}".replace('.', ',')
+
+def format_cap_especifica(valor):
+    """6 casas decimais"""
+    if valor is None: return "-"
+    return f"{valor:.6f}".replace('.', ',')
 
 def analisar_dados_log(x_data, y_data, x1=10, x2=100):
     try:
@@ -90,7 +96,7 @@ if uploaded_file:
         if ds_reb > 0:
             T_reb_h = (0.183 * q) / ds_reb
             T_reb_s = T_reb_h / 3600
-            cap_esp_reb = T_reb_h * 0.8 # Correção Logan
+            cap_esp_reb = T_reb_h * 0.8
             s_max_reb = df_reb['nd'].max() - ne
             vazao_otima = cap_esp_reb * s_max_reb
         else:
@@ -107,20 +113,22 @@ if uploaded_file:
                 texto = (f"y = {a_reb:.4f}ln(x) + {b_reb:.4f}\n"
                          f"R² = {r2_reb:.4f}\n"
                          f"ΔS = {ds_reb:.4f} m")
-                ax1.text(0.02, 0.98, texto, transform=ax1.transAxes, 
-                         verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+                ax1.text(0.02, 0.02, texto, transform=ax1.transAxes, 
+                         verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+            
+            # --- EIXOS E INVERSÃO ---
             ax1.set_xscale('log')
             ax1.set_xlabel('Tempo (min)')
             ax1.set_ylabel('Nível Dinâmico (m)')
+            ax1.invert_yaxis() # Inverte para mostrar profundidade (zero no topo)
             ax1.grid(True, which="both", ls="--", alpha=0.4)
             st.pyplot(fig1)
             
         with col1b:
             st.subheader("Resultados Rebaixamento")
-            st.metric("Transmissividade (m²/h)", f"{T_reb_h:.4f}")
-            # A linha abaixo foi corrigida para não quebrar
-            st.metric("Transmissividade (m²/s)", f"{T_reb_s:.2e}")
-            st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_reb:.4f}", delta="Fórmula T * 0.8")
+            st.metric("Transmissividade (m²/h)", f"{T_reb_h:.9f}")
+            st.metric("Transmissividade (m²/s)", f"{T_reb_s:.9f}") # Sem notação científica
+            st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_reb:.6f}")
             st.metric("Vazão Ótima Calculada", f"{vazao_otima:.2f} m³/h")
 
     # 2. RECUPERAÇÃO
@@ -132,7 +140,7 @@ if uploaded_file:
             if ds_rec > 0:
                 T_rec_h = (0.183 * q) / ds_rec
                 T_rec_s = T_rec_h / 3600
-                cap_esp_rec = T_rec_h * 0.8 # Correção Logan
+                cap_esp_rec = T_rec_h * 0.8
             else:
                 T_rec_h = T_rec_s = cap_esp_rec = 0
                 
@@ -146,19 +154,22 @@ if uploaded_file:
                     texto2 = (f"y = {a_rec:.4f}ln(x) + {b_rec:.4f}\n"
                               f"R² = {r2_rec:.4f}\n"
                               f"ΔS' = {ds_rec:.4f} m")
-                    ax2.text(0.02, 0.98, texto2, transform=ax2.transAxes, 
-                             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+                    ax2.text(0.02, 0.02, texto2, transform=ax2.transAxes, 
+                             verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+                
+                # --- EIXOS E INVERSÃO ---
                 ax2.set_xscale('log')
                 ax2.set_xlabel("Razão t/t' (Adimensional)")
                 ax2.set_ylabel("Rebaixamento Residual (m)")
+                ax2.invert_yaxis() # Inverte eixo Y
                 ax2.grid(True, which="both", ls="--", alpha=0.4)
                 st.pyplot(fig2)
                 
             with col2b:
                 st.subheader("Resultados Recuperação")
-                st.metric("Transmissividade (m²/h)", f"{T_rec_h:.4f}")
-                st.metric("Transmissividade (m²/s)", f"{T_rec_s:.2e}")
-                st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_rec:.4f}", delta="Fórmula T * 0.8")
+                st.metric("Transmissividade (m²/h)", f"{T_rec_h:.9f}")
+                st.metric("Transmissividade (m²/s)", f"{T_rec_s:.9f}")
+                st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_rec:.6f}")
         else:
             st.warning("Dados de recuperação ausentes.")
             T_rec_h = T_rec_s = cap_esp_rec = ds_rec = 0
@@ -183,22 +194,22 @@ if uploaded_file:
             contexto = {
                 'cliente': cliente,
                 'municipio': municipio,
-                'ne': format_numero(ne),
-                'q': format_numero(q),
+                'ne': format_padrao(ne),
+                'q': format_padrao(q),
                 # Rebaixamento
-                'nd': format_numero(df_reb['nd'].max()),
-                's_total': format_numero(s_max_reb),
-                'ds_linha': format_numero(ds_reb),
-                'transmissividade': format_numero(T_reb_h),
-                't_reb_s': format_cientifico(T_reb_s),
-                'ce_reb': format_numero(cap_esp_reb),
-                'vazao_otima': format_numero(vazao_otima),
+                'nd': format_padrao(df_reb['nd'].max()),
+                's_total': format_padrao(s_max_reb),
+                'ds_linha': format_padrao(ds_reb),
+                'transmissividade': format_transmissividade(T_reb_h), # 9 casas
+                't_reb_s': format_transmissividade(T_reb_s),      # 9 casas (sem exp)
+                'ce_reb': format_cap_especifica(cap_esp_reb),     # 6 casas
+                'vazao_otima': format_padrao(vazao_otima),
                 'grafico_rebaixamento': InlineImage(doc, img_reb, width=Mm(150)),
                 # Recuperação
-                'ds_rec': format_numero(ds_rec),
-                't_rec_h': format_numero(T_rec_h),
-                't_rec_s': format_cientifico(T_rec_s),
-                'ce_rec': format_numero(cap_esp_rec),
+                'ds_rec': format_padrao(ds_rec),
+                't_rec_h': format_transmissividade(T_rec_h),      # 9 casas
+                't_rec_s': format_transmissividade(T_rec_s),      # 9 casas
+                'ce_rec': format_cap_especifica(cap_esp_rec),     # 6 casas
                 'grafico_recuperacao': img_rec_word
             }
             
