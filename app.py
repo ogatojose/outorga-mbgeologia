@@ -7,6 +7,7 @@ from sklearn.metrics import r2_score
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
 import io
+from datetime import timedelta, date
 
 # --- FUNÇÕES ---
 def modelo_logaritmico(x, a, b):
@@ -23,6 +24,26 @@ def format_transmissividade(valor):
 def format_cap_especifica(valor):
     if valor is None: return "-"
     return f"{valor:.6f}".replace('.', ',')
+
+def gerar_imagem_tabela(df, titulo):
+    """Converte um DataFrame em uma imagem Matplotlib para download"""
+    # Ajuste de tamanho dinâmico baseada nas linhas
+    altura = max(2, len(df) * 0.3 + 1)
+    fig, ax = plt.subplots(figsize=(8, altura))
+    ax.axis('off')
+    ax.set_title(titulo, fontweight="bold")
+    
+    # Criar tabela
+    tabela = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
+    tabela.auto_set_font_size(False)
+    tabela.set_fontsize(10)
+    tabela.scale(1.2, 1.2)
+    
+    # Salvar em buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+    buf.seek(0)
+    return buf
 
 def analisar_dados_log(x_data, y_data, x1=10, x2=100):
     try:
@@ -41,12 +62,11 @@ def analisar_dados_log(x_data, y_data, x1=10, x2=100):
 st.set_page_config(page_title="Central de Outorgas", layout="wide")
 st.title("🌊 Central de Outorgas e Projetos")
 
-# --- SIDEBAR ---
-st.sidebar.title("1. Dados Gerais")
-cliente = st.sidebar.text_input("Cliente", "Cliente Exemplo")
-municipio = st.sidebar.text_input("Município", "Tapera/RS")
+# --- SIDEBAR (INPUTS) ---
+st.sidebar.title("1. Dados do Ensaio")
 uploaded_file = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"])
 
+# Inicializando variáveis
 q = ne = nd_final = transmissividade = s_total = 0
 
 if uploaded_file:
@@ -54,31 +74,45 @@ if uploaded_file:
     try:
         q_auto = float(df_full.iloc[2, 4]) 
         ne_auto = float(df_full.iloc[2, 1])
-        st.sidebar.success(f"Lido: Q={q_auto} | NE={ne_auto}")
     except:
         q_auto = 6.0
         ne_auto = 0.0
-        
+    
+    # --- FORMULÁRIO COMPLETO NA SIDEBAR ---
+    st.sidebar.subheader("Identificação")
+    cliente = st.sidebar.text_input("Cliente", "Cliente Exemplo")
+    municipio = st.sidebar.text_input("Município", "Tapera/RS")
+    aquifero = st.sidebar.text_input("Aquífero", "Serra Geral")
+    execucao = st.sidebar.text_input("Execução", "Bruna Koppe Kronhardt")
+    
+    st.sidebar.subheader("Datas")
+    data_inicio = st.sidebar.date_input("Data Início", date.today())
+    data_fim = data_inicio + timedelta(days=1)
+    st.sidebar.caption(f"Término Automático: {data_fim.strftime('%d/%m/%Y')}")
+
+    st.sidebar.subheader("Dados Técnicos")
+    profundidade_poco = st.sidebar.text_input("Profundidade Poço (m)", "100")
+    crivo_bomba = st.sidebar.text_input("Crivo da Bomba (m)", "80")
+    tipo_equipamento = st.sidebar.text_input("Equipamento", "Bomba Submersa")
+    tempo_bombeamento = st.sidebar.text_input("Tempo Bombeamento", "24 h")
+    
+    st.sidebar.markdown("---")
     q = st.sidebar.number_input("Vazão (m³/h)", value=q_auto)
     ne = st.sidebar.number_input("Nível Estático (m)", value=ne_auto)
-
-    # --- PROJETO ---
+    
+    # --- DADOS PARA O PROJETO (Aba 2) ---
     st.sidebar.markdown("---")
-    st.sidebar.title("2. Regime e Equipamento")
-    
-    # MUDANÇA 1: Caixa de digitação para o tempo (permite decimais, ex: 0.5)
-    tempo_op = st.sidebar.number_input("Tempo de Operação (horas/dia)", min_value=0.01, max_value=24.0, value=20.0, step=0.1, format="%.2f")
-    
+    st.sidebar.title("2. Projeto Operacional")
+    tempo_op = st.sidebar.number_input("Tempo Operação (h/dia)", 0.1, 24.0, 20.0)
     vazao_diaria = q * tempo_op
-    st.sidebar.info(f"Q Diária: {vazao_diaria:.2f} m³/dia")
-
+    
     modelo_bomba = st.sidebar.text_input("Modelo Bomba", "Ebara 4BPS")
     potencia = st.sidebar.text_input("Potência", "1.5 cv")
     num_estagios = st.sidebar.text_input("Estágios", "12")
     diametro_edutor = st.sidebar.text_input("Diâmetro Edutor", "1 1/2 pol")
-    prof_bomba = st.sidebar.number_input("Profundidade Instalação (m)", value=ne + 20.0)
+    prof_bomba = st.sidebar.number_input("Prof. Instalação (m)", value=ne + 20.0)
 
-    # --- PROCESSAMENTO ---
+    # --- PROCESSAMENTO (Igual) ---
     df_reb = df_full.iloc[3:58, [0, 1]].copy()
     df_reb.columns = ['t', 'nd']
     df_reb = df_reb.apply(pd.to_numeric, errors='coerce').dropna()
@@ -93,7 +127,6 @@ if uploaded_file:
     except:
         df_rec = pd.DataFrame()
 
-    # Cálculos
     a_reb, b_reb, r2_reb, ds_reb = analisar_dados_log(df_reb['t'], df_reb['nd'])
     
     if ds_reb > 0:
@@ -121,13 +154,44 @@ if uploaded_file:
 
     submergencia = prof_bomba - nd_final
 
-    # --- INTERFACE ---
-    tab1, tab2, tab3 = st.tabs(["📉 Gráficos e Dados", "📝 Usos e Demandas", "📥 Downloads"])
+    # --- TABS ---
+    tab1, tab2, tab3 = st.tabs(["📊 Dados do Teste", "📝 Usos e Demandas", "📥 Downloads"])
     
     with tab1:
-        # SEÇÃO 1: GRÁFICOS
-        col1, col2 = st.columns([2, 1])
-        with col1:
+        # ================= CABEÇALHO PERSONALIZADO =================
+        st.markdown("### 📋 Resumo do Teste de Bombeamento")
+        
+        # Container com estilo visual (borda leve)
+        with st.container():
+            col_h1, col_h2, col_h3, col_h4 = st.columns(4)
+            
+            with col_h1:
+                st.markdown(f"**Cliente:** {cliente}")
+                st.markdown(f"**Município:** {municipio}")
+                st.markdown(f"**Aquífero:** {aquifero}")
+                st.markdown(f"**Execução:** {execucao}")
+            
+            with col_h2:
+                st.markdown(f"**Data Início:** {data_inicio.strftime('%d/%m/%Y')}")
+                st.markdown(f"**Data Término:** {data_fim.strftime('%d/%m/%Y')}")
+                st.markdown(f"**Profundidade:** {profundidade_poco} m")
+                st.markdown(f"**Crivo:** {crivo_bomba} m")
+
+            with col_h3:
+                st.markdown(f"**Equipamento:** {tipo_equipamento}")
+                st.markdown(f"**Tempo Bomb.:** {tempo_bombeamento}")
+                st.markdown(f"**Vazão:** {q:.2f} m³/h")
+            
+            with col_h4:
+                st.markdown(f"**Nível Estático:** {ne:.2f} m")
+                st.markdown(f"**Nível Dinâmico:** {nd_final:.2f} m")
+                st.markdown(f"**Rebaixamento:** {s_total:.2f} m")
+
+        st.divider()
+
+        # ================= GRÁFICOS E RESULTADOS =================
+        c_graf, c_res = st.columns([2, 1])
+        with c_graf:
             fig1, ax1 = plt.subplots(figsize=(8, 4))
             ax1.scatter(df_reb['t'], df_reb['nd'], color='navy', s=20)
             if a_reb is not None:
@@ -140,35 +204,49 @@ if uploaded_file:
             ax1.invert_yaxis()
             ax1.grid(True, ls="--", alpha=0.4)
             st.pyplot(fig1)
-        with col2:
-            st.metric("T (m²/h)", f"{T_reb_h:.9f}")
-            st.metric("Submergência", f"{submergencia:.2f} m", delta_color="normal" if submergencia > 2 else "inverse")
         
-        # MUDANÇA 2: TABELAS DE DADOS
+        with c_res:
+            st.info("Resultados Calculados")
+            st.metric("Transmissividade (T)", f"{T_reb_h:.9f} m²/h")
+            st.metric("Cap. Específica", f"{cap_esp_reb:.6f} m³/h/m")
+            st.metric("Submergência", f"{submergencia:.2f} m", delta_color="normal" if submergencia > 2 else "inverse")
+
         st.divider()
-        st.subheader("📋 Dados Brutos da Planilha (Linhas 4 a 58)")
+
+        # ================= TABELAS COMO IMAGEM =================
+        st.subheader("📷 Tabelas de Dados (Baixar como Imagem)")
         
         c_tab1, c_tab2 = st.columns(2)
         
+        # TABELA BOMBEAMENTO
         with c_tab1:
-            st.markdown("**Bombeamento (Colunas A, B, C, D)**")
-            # iloc usa índices 0,1,2,3 para colunas A,B,C,D
+            st.markdown("**Bombeamento**")
             df_show_bomb = df_full.iloc[3:58, 0:4].reset_index(drop=True)
-            # Tentativa de renomear para ficar legível (opcional)
-            df_show_bomb.columns = ["t (min)", "N.D (m)", "s (m)", "Recup (m)"] 
-            st.dataframe(df_show_bomb, use_container_width=True, height=300)
+            df_show_bomb.columns = ["t (min)", "N.D (m)", "s (m)", "r (m)"]
             
-        with c_tab2:
-            st.markdown("**Recuperação (Colunas G a M)**")
-            # iloc usa índices 6 a 12 para colunas G,H,I,J,K,L,M
-            df_show_rec = df_full.iloc[3:58, 6:13].reset_index(drop=True)
-            df_show_rec.columns = ["G", "H", "I", "J (N.A)", "K", "L", "M (t/t')"]
-            st.dataframe(df_show_rec, use_container_width=True, height=300)
+            # Mostra na tela (interativo)
+            st.dataframe(df_show_bomb, height=300, use_container_width=True)
+            
+            # Botão Download Imagem
+            img_bomb = gerar_imagem_tabela(df_show_bomb, f"Bombeamento - {cliente}")
+            st.download_button("⬇️ Baixar Tabela Bombeamento (PNG)", img_bomb, f"tabela_bombeamento_{cliente}.png", "image/png")
 
-    # --- ABA 2: LOGICA DE USOS NOVA ---
+        # TABELA RECUPERAÇÃO
+        with c_tab2:
+            st.markdown("**Recuperação**")
+            df_show_rec = df_full.iloc[3:58, 6:13].reset_index(drop=True)
+            df_show_rec.columns = ["t'", "t", "ND", "NA", "r'", "s'", "t/t'"]
+            
+            # Mostra na tela
+            st.dataframe(df_show_rec, height=300, use_container_width=True)
+            
+            # Botão Download Imagem
+            img_rec = gerar_imagem_tabela(df_show_rec, f"Recuperação - {cliente}")
+            st.download_button("⬇️ Baixar Tabela Recuperação (PNG)", img_rec, f"tabela_recuperacao_{cliente}.png", "image/png")
+
+    # --- ABA 2: USOS (Mantida igual) ---
     with tab2:
         st.header("Definição dos Usos e Porcentagens")
-        
         c1, c2 = st.columns([1, 1])
         with c1:
             st.subheader("Finalidades")
@@ -226,6 +304,7 @@ if uploaded_file:
             
             justificativa = st.text_area("Texto Final:", value=sugestao, height=200)
 
+    # --- ABA 3: DOWNLOADS ---
     with tab3:
         st.header("Gerar Documentos")
         
