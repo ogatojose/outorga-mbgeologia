@@ -1,157 +1,249 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import io
-from sklearn.metrics import r2_score
+import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from sklearn.metrics import r2_score
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
-
-# --- BLOCO DE SEGURANÇA (Instalação Automática) ---
-try:
-    import matplotlib.pyplot as plt
-    from sklearn.linear_model import LinearRegression
-except ModuleNotFoundError:
-    import subprocess
-    import sys
-    st.warning("Instalando bibliotecas matemáticas... aguarde.")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "matplotlib", "scikit-learn", "scipy"])
-    import matplotlib.pyplot as plt
-    from sklearn.linear_model import LinearRegression
+import io
 
 # --- FUNÇÕES MATEMÁTICAS ---
 def modelo_logaritmico(x, a, b):
+    # Evita log de números negativos ou zero
     return a * np.log(x) + b
 
-def calcular_parametros_exatos(df_raw):
-    """
-    Realiza a regressão exata nas linhas 4 a 58 (índices 3 a 57)
-    Considerando Coluna A = Tempo (t), Coluna B = Nível Dinâmico (ND)
-    """
-    # Selecionar intervalo fixo conforme solicitado (Linha 4 a 58 do Excel)
-    # Pandas usa índice 0, então linha 4 é índice 3. Fim 58 é índice 57 (slice 3:58)
-    try:
-        df_crop = df_raw.iloc[3:58, :2].copy() # Pega colunas A e B
-        df_crop.columns = ['t', 'nd']
-        
-        # Limpeza e conversão
-        df_crop = df_crop.apply(pd.to_numeric, errors='coerce').dropna()
-        df_crop = df_crop[df_crop['t'] > 0] # Evitar log(0)
-        
-        X = df_crop['t'].values
-        y = df_crop['nd'].values
-        
-        if len(X) < 5:
-            return None, None, None, None, "Dados insuficientes nas linhas 4-58"
+def format_numero(valor):
+    """1.23 -> 1,23"""
+    if valor is None: return "-"
+    return f"{valor:.2f}".replace('.', ',')
 
-        # Ajuste da Curva Logarítmica: y = a*ln(x) + b
-        # Onde 'a' é a inclinação relacionada ao ciclo log
-        popt, pcov = curve_fit(modelo_logaritmico, X, y)
+def format_cientifico(valor):
+    """0.000123 -> 1,23E-04 (formato científico para m²/s)"""
+    if valor is None: return "-"
+    return f"{valor:.2e}".replace('.', ',')
+
+def analisar_dados_log(x_data, y_data, x1=10, x2=100):
+    """
+    Realiza a regressão y = a*ln(x) + b e calcula métricas
+    """
+    try:
+        # Ajuste da curva
+        popt, pcov = curve_fit(modelo_logaritmico, x_data, y_data)
         a_calc, b_calc = popt
         
-        # Calcular R²
-        y_pred = modelo_logaritmico(X, *popt)
-        r2 = r2_score(y, y_pred)
+        # R²
+        y_pred = modelo_logaritmico(x_data, *popt)
+        r2 = r2_score(y_data, y_pred)
         
-        # Calcular Delta S usando x1=10 e x2=100 na equação ajustada
-        y_10 = modelo_logaritmico(10, a_calc, b_calc)
-        y_100 = modelo_logaritmico(100, a_calc, b_calc)
-        delta_s = abs(y_100 - y_10) # Rebaixamento por ciclo logarítmico
+        # Delta S (Diferença entre x=10 e x=100 na reta ajustada)
+        y_10 = modelo_logaritmico(x1, a_calc, b_calc)
+        y_100 = modelo_logaritmico(x2, a_calc, b_calc)
+        delta_s = abs(y_100 - y_10)
         
-        dados_grafico = {
-            'X': X, 'y': y, 
-            'X_fit': np.sort(X), 
-            'y_fit': modelo_logaritmico(np.sort(X), a_calc, b_calc),
-            'eq_label': f"y = {a_calc:.4f}*ln(x) + {b_calc:.4f}",
-            'r2': r2
-        }
-        
-        return delta_s, a_calc, b_calc, dados_grafico, None
-        
-    except Exception as e:
-        return None, None, None, None, f"Erro no processamento: {str(e)}"
+        return a_calc, b_calc, r2, delta_s
+    except:
+        return None, None, 0, 0
 
-# --- INTERFACE DO STREAMLIT ---
-st.set_page_config(page_title="Gestão de Recursos Hídricos", layout="wide")
-st.title("🌊 Automação de Teste de Bombeamento (Ajuste Fino)")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Hidrogeologia Profissional", layout="wide")
+st.title("🌊 Sistema de Análise de Teste de Bombeamento")
 
-# --- INPUTS ---
-st.sidebar.header("Configurações")
-cliente = st.sidebar.text_input("Cliente", "Cliente Padrão")
+# --- SIDEBAR: CONFIGURAÇÕES ---
+st.sidebar.header("Dados de Entrada")
+cliente = st.sidebar.text_input("Cliente", "Cliente Exemplo")
 municipio = st.sidebar.text_input("Município", "Tapera/RS")
-
-uploaded_file = st.file_uploader("Carregue a planilha (Excel)", type=["xlsx"])
+uploaded_file = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    # Ler sem cabeçalho para pegar por coordenadas fixas (A, B, E, etc)
+    # Ler planilha completa (sem cabeçalho para usar índices fixos)
     df_full = pd.read_excel(uploaded_file, header=None)
     
-    # 1. PEGAR VAZÃO (Linha 3, Coluna E -> índice [2, 4])
+    # --- 1. LEITURA DE PARÂMETROS FIXOS ---
     try:
-        q_auto = float(df_full.iloc[2, 4]) # Linha 3 (idx 2), Col E (idx 4)
-        st.success(f"✅ Vazão detectada na célula E3: {q_auto} m³/h")
+        q_auto = float(df_full.iloc[2, 4]) # Célula E3
+        ne_auto = float(df_full.iloc[2, 1]) # Célula B3
+        st.sidebar.success(f"Vazão (E3): {q_auto} m³/h | NE (B3): {ne_auto} m")
     except:
-        st.warning("⚠️ Não foi possível ler a vazão em E3. Usando valor padrão.")
+        st.sidebar.warning("Não foi possível ler E3 ou B3 automaticamente.")
         q_auto = 6.0
+        ne_auto = 0.0
         
-    vazao = st.number_input("Confirmar Vazão (m³/h)", value=q_auto)
+    q = st.sidebar.number_input("Confirmar Vazão (m³/h)", value=q_auto)
+    ne = st.sidebar.number_input("Confirmar Nível Estático (m)", value=ne_auto)
 
-    # 2. CALCULAR PARÂMETROS
-    delta_s, a, b, graf_data, erro = calcular_parametros_exatos(df_full)
+    # --- 2. PREPARAÇÃO DOS DADOS ---
+    # REBAIXAMENTO: Linhas 4-58, Col A(t) e B(ND)
+    df_reb = df_full.iloc[3:58, [0, 1]].copy()
+    df_reb.columns = ['t', 'nd']
+    df_reb = df_reb.apply(pd.to_numeric, errors='coerce').dropna()
+    df_reb = df_reb[df_reb['t'] > 0] # Remove t=0 para log
     
-    if erro:
-        st.error(erro)
-    else:
-        # Cálculos Finais
-        # Transmissividade T = (0.183 * Q) / DeltaS
-        transmissividade = (0.183 * vazao) / delta_s
-        
-        # Vazão Ótima (Estimativa baseada no NE original e ND máximo projetado ou real)
-        # Pegando NE da Célula B9 (Linha 9, Col B) se existir, ou input manual
-        try:
-            ne_val = float(df_full.iloc[8, 1]) # Linha 9 é idx 8
-        except:
-            ne_val = 41.89
-            
-        ne = st.number_input("Nível Estático (NE)", value=ne_val)
-        # O rebaixamento total para Q ótima geralmente usa o s_max do teste ou disponível
-        s_max_teste = max(graf_data['y']) - min(graf_data['y']) # Estimativa simples
-        
-        vazao_otima = 0.8 * transmissividade * (graf_data['y'][-1] - graf_data['y'][0]) # Exemplo usando range do teste
+    # RECUPERAÇÃO: Linhas 4-58. 
+    # Assumindo: Coluna M (Index 12) = t/t' e Coluna J (Index 9) = N.A.
+    try:
+        df_rec = df_full.iloc[3:58, [12, 9]].copy()
+        df_rec.columns = ['ratio', 'na']
+        df_rec = df_rec.apply(pd.to_numeric, errors='coerce').dropna()
+        df_rec = df_rec[df_rec['ratio'] > 0]
+        # Calcular Rebaixamento Residual (s') = NA - NE
+        df_rec['res'] = df_rec['na'] - ne
+    except:
+        df_rec = pd.DataFrame() # Vazio se falhar
 
-        # --- EXIBIÇÃO ---
-        col1, col2 = st.columns([2, 1])
+    # --- 3. CÁLCULOS E GRÁFICOS ---
+    tab1, tab2 = st.tabs(["📉 Rebaixamento", "📈 Recuperação"])
+    
+    # --- ABA 1: REBAIXAMENTO ---
+    with tab1:
+        col1a, col1b = st.columns([2, 1])
         
-        with col1:
-            st.subheader("Gráfico: Nível Dinâmico vs Tempo")
-            fig, ax = plt.subplots(figsize=(8, 5))
+        # Processamento Matemática
+        a_reb, b_reb, r2_reb, ds_reb = analisar_dados_log(df_reb['t'], df_reb['nd'])
+        
+        # Cálculos Hidráulicos
+        if ds_reb > 0:
+            T_reb_h = (0.183 * q) / ds_reb  # m²/h
+            T_reb_s = T_reb_h / 3600        # m²/s
             
-            # Pontos Reais
-            ax.scatter(graf_data['X'], graf_data['y'], color='blue', alpha=0.6, label='Dados de Campo')
+            # Capacidade Específica (Q / s_total)
+            s_max_reb = df_reb['nd'].max() - ne
+            cap_esp_reb = q / s_max_reb if s_max_reb > 0 else 0
             
-            # Linha de Tendência
-            ax.plot(graf_data['X_fit'], graf_data['y_fit'], 'r--', linewidth=2, label='Ajuste Logarítmico')
+            vazao_otima = 0.8 * T_reb_h * s_max_reb
+        else:
+            T_reb_h = T_reb_s = cap_esp_reb = vazao_otima = 0
+
+        with col1a:
+            # Gráfico Rebaixamento
+            fig1, ax1 = plt.subplots(figsize=(8, 5))
+            ax1.scatter(df_reb['t'], df_reb['nd'], color='navy', s=20, label='Dados')
             
-            # Anotação da Equação e R²
-            texto_box = f"{graf_data['eq_label']}\n$R^2$ = {graf_data['r2']:.4f}\n$\Delta S$ (ciclo) = {delta_s:.4f}m"
-            ax.text(0.05, 0.95, texto_box, transform=ax.transAxes, fontsize=11,
-                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            if a_reb is not None:
+                x_fit = np.logspace(np.log10(min(df_reb['t'])), np.log10(max(df_reb['t'])), 100)
+                y_fit = modelo_logaritmico(x_fit, a_reb, b_reb)
+                ax1.plot(x_fit, y_fit, 'r--', label='Ajuste Log')
+                
+                texto = (f"y = {a_reb:.4f}ln(x) + {b_reb:.4f}\n"
+                         f"R² = {r2_reb:.4f}\n"
+                         f"ΔS = {ds_reb:.4f} m")
+                ax1.text(0.02, 0.98, texto, transform=ax1.transAxes, 
+                         verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+
+            ax1.set_xscale('log')
+            ax1.set_xlabel('Tempo (min)')
+            ax1.set_ylabel('Nível Dinâmico (m)')
+            ax1.grid(True, which="both", ls="--", alpha=0.4)
+            st.pyplot(fig1)
             
-            ax.set_xscale('log') # Eixo X em escala logarítmica
-            ax.set_xlabel('Tempo (min) - Escala Log')
-            ax.set_ylabel('Nível Dinâmico (m)')
-            ax.grid(True, which="both", ls="--", alpha=0.4)
-            ax.legend()
-            st.pyplot(fig)
+        with col1b:
+            st.subheader("Resultados Rebaixamento")
+            st.metric("Transmissividade (m²/h)", f"{T_reb_h:.4f}")
+            st.metric("Transmissividade (m²/s)", f"{T_reb_s:.2e}")
+            st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_reb:.4f}")
+            st.metric("Vazão Ótima", f"{vazao_otima:.2f}")
+
+    # --- ABA 2: RECUPERAÇÃO ---
+    with tab2:
+        col2a, col2b = st.columns([2, 1])
+        
+        # Processamento Matemática
+        if not df_rec.empty:
+            a_rec, b_rec, r2_rec, ds_rec = analisar_dados_log(df_rec['ratio'], df_rec['res'])
             
-        with col2:
-            st.subheader("Resultados")
-            st.metric("ΔS (Calculado)", f"{delta_s:.4f} m")
-            st.metric("Transmissividade (T)", f"{transmissividade:.4f} m²/h")
-            # Ajuste manual opcional se quiser forçar outro valor
-            st.caption("Fórmula: T = (0,183 * Q) / ΔS")
+            # Cálculos Hidráulicos Recuperação
+            if ds_rec > 0:
+                T_rec_h = (0.183 * q) / ds_rec
+                T_rec_s = T_rec_h / 3600
+                # Para recuperação, Cap Específica costuma ser replicada ou recalculada
+                # Aqui usaremos a mesma lógica do rebaixamento para consistência
+                cap_esp_rec = cap_esp_reb 
+            else:
+                T_rec_h = T_rec_s = cap_esp_rec = 0
+                
+            with col2a:
+                fig2, ax2 = plt.subplots(figsize=(8, 5))
+                ax2.scatter(df_rec['ratio'], df_rec['res'], color='green', s=20, label='Dados')
+                
+                if a_rec is not None:
+                    x_fit2 = np.logspace(np.log10(min(df_rec['ratio'])), np.log10(max(df_rec['ratio'])), 100)
+                    y_fit2 = modelo_logaritmico(x_fit2, a_rec, b_rec)
+                    ax2.plot(x_fit2, y_fit2, 'r--', label='Ajuste Log')
+                    
+                    texto2 = (f"y = {a_rec:.4f}ln(x) + {b_rec:.4f}\n"
+                              f"R² = {r2_rec:.4f}\n"
+                              f"ΔS' = {ds_rec:.4f} m")
+                    ax2.text(0.02, 0.98, texto2, transform=ax2.transAxes, 
+                             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+
+                ax2.set_xscale('log')
+                ax2.set_xlabel("Razão t/t' (Adimensional)")
+                ax2.set_ylabel("Rebaixamento Residual (m)")
+                ax2.grid(True, which="both", ls="--", alpha=0.4)
+                st.pyplot(fig2)
+                
+            with col2b:
+                st.subheader("Resultados Recuperação")
+                st.metric("Transmissividade (m²/h)", f"{T_rec_h:.4f}")
+                st.metric("Transmissividade (m²/s)", f"{T_rec_s:.2e}")
+                st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_rec:.4f}")
+        else:
+            st.warning("Dados de recuperação não encontrados nas colunas M e J.")
+            T_rec_h = T_rec_s = ds_rec = 0
+
+    # --- GERAR RELATÓRIO WORD ---
+    st.divider()
+    if st.button("📄 Baixar Relatório Completo"):
+        try:
+            doc = DocxTemplate("template_memorial.docx")
             
-            st.divider()
-            if st.button("📄 Gerar Word"):
-                st.info("O download iniciará em breve (Requer template atualizado).")
-                # Aqui iria o bloco do docxtpl (mesmo do anterior)
+            # Salvar Gráfico 1 (Rebaixamento)
+            img_reb = io.BytesIO()
+            fig1.savefig(img_reb, format='png', dpi=150)
+            img_reb.seek(0)
+            
+            # Salvar Gráfico 2 (Recuperação)
+            img_rec = io.BytesIO()
+            if not df_rec.empty:
+                fig2.savefig(img_rec, format='png', dpi=150)
+                img_rec.seek(0)
+                img_rec_word = InlineImage(doc, img_rec, width=Mm(150))
+            else:
+                img_rec_word = "Gráfico não gerado"
+
+            contexto = {
+                'cliente': cliente,
+                'municipio': municipio,
+                'ne': format_numero(ne),
+                'q': format_numero(q),
+                # Rebaixamento
+                'nd': format_numero(df_reb['nd'].max()),
+                's_total': format_numero(s_max_reb),
+                'ds_linha': format_numero(ds_reb),
+                'transmissividade': format_numero(T_reb_h), # m²/h
+                't_reb_s': format_cientifico(T_reb_s),      # m²/s
+                'ce_reb': format_numero(cap_esp_reb),
+                'vazao_otima': format_numero(vazao_otima),
+                'grafico_rebaixamento': InlineImage(doc, img_reb, width=Mm(150)),
+                # Recuperação
+                'ds_rec': format_numero(ds_rec),
+                't_rec_h': format_numero(T_rec_h),
+                't_rec_s': format_cientifico(T_rec_s),
+                'ce_rec': format_numero(cap_esp_rec),
+                'grafico_recuperacao': img_rec_word
+            }
+            
+            doc.render(contexto)
+            
+            bio = io.BytesIO()
+            doc.save(bio)
+            
+            st.download_button(
+                label="⬇️ Download .docx",
+                data=bio.getvalue(),
+                file_name=f"Memorial_{cliente}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        except Exception as e:
+            st.error(f"Erro no template: {e}")
+            st.info("Verifique se as etiquetas {{ grafico_recuperacao }} etc. estão no Word.")
