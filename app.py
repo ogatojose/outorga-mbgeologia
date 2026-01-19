@@ -26,20 +26,61 @@ def format_cap_especifica(valor):
     return f"{valor:.6f}".replace('.', ',')
 
 def gerar_imagem_tabela(df, titulo):
-    """Converte um DataFrame em uma imagem Matplotlib para download"""
-    # Ajuste de tamanho dinâmico baseada nas linhas
-    altura = max(2, len(df) * 0.3 + 1)
+    """Converte DataFrame em imagem PNG"""
+    # Altura dinâmica baseada no número de linhas
+    altura = max(2, len(df) * 0.25 + 1.5)
     fig, ax = plt.subplots(figsize=(8, altura))
     ax.axis('off')
-    ax.set_title(titulo, fontweight="bold")
+    ax.set_title(titulo, fontweight="bold", fontsize=12, pad=10)
     
     # Criar tabela
     tabela = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
     tabela.auto_set_font_size(False)
-    tabela.set_fontsize(10)
-    tabela.scale(1.2, 1.2)
+    tabela.set_fontsize(9)
+    tabela.scale(1.2, 1.3) # Ajuste de espaçamento
     
-    # Salvar em buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+    buf.seek(0)
+    return buf
+
+def gerar_imagem_cabecalho(dados):
+    """Gera uma imagem com os dados do cabeçalho"""
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.axis('off')
+    
+    # Borda decorativa simples
+    rect = plt.Rectangle((0.01, 0.01), 0.98, 0.98, fill=False, color="black", lw=1.5)
+    ax.add_patch(rect)
+    
+    # Título
+    ax.text(0.5, 0.9, "RESUMO TÉCNICO - TESTE DE BOMBEAMENTO", 
+            ha='center', va='center', fontsize=14, fontweight='bold')
+    
+    # Linha separadora
+    ax.plot([0.05, 0.95], [0.82, 0.82], color='black', lw=0.5)
+
+    # Coluna 1 (X=0.05)
+    y_start = 0.75
+    espaco = 0.12
+    
+    ax.text(0.05, y_start, f"Cliente: {dados['cliente']}", fontsize=11, fontweight='bold')
+    ax.text(0.05, y_start - espaco, f"Município: {dados['municipio']}", fontsize=11)
+    ax.text(0.05, y_start - 2*espaco, f"Aquífero: {dados['aquifero']}", fontsize=11)
+    ax.text(0.05, y_start - 3*espaco, f"Execução: {dados['execucao']}", fontsize=11)
+    
+    # Coluna 2 (X=0.50)
+    ax.text(0.50, y_start, f"Data Início: {dados['data_ini']}", fontsize=11)
+    ax.text(0.50, y_start - espaco, f"Data Fim: {dados['data_fim']}", fontsize=11)
+    ax.text(0.50, y_start - 2*espaco, f"Profundidade: {dados['prof']} m", fontsize=11)
+    ax.text(0.50, y_start - 3*espaco, f"Crivo: {dados['crivo']} m", fontsize=11)
+    
+    # Coluna 3 (X=0.75)
+    ax.text(0.75, y_start, f"NE: {dados['ne']} m", fontsize=11)
+    ax.text(0.75, y_start - espaco, f"ND: {dados['nd']} m", fontsize=11)
+    ax.text(0.75, y_start - 2*espaco, f"Vazão: {dados['q']} m³/h", fontsize=11)
+    ax.text(0.75, y_start - 3*espaco, f"Tempo: {dados['tempo']}", fontsize=11)
+
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
     buf.seek(0)
@@ -66,7 +107,6 @@ st.title("🌊 Central de Outorgas e Projetos")
 st.sidebar.title("1. Dados do Ensaio")
 uploaded_file = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"])
 
-# Inicializando variáveis
 q = ne = nd_final = transmissividade = s_total = 0
 
 if uploaded_file:
@@ -78,7 +118,6 @@ if uploaded_file:
         q_auto = 6.0
         ne_auto = 0.0
     
-    # --- FORMULÁRIO COMPLETO NA SIDEBAR ---
     st.sidebar.subheader("Identificação")
     cliente = st.sidebar.text_input("Cliente", "Cliente Exemplo")
     municipio = st.sidebar.text_input("Município", "Tapera/RS")
@@ -100,7 +139,7 @@ if uploaded_file:
     q = st.sidebar.number_input("Vazão (m³/h)", value=q_auto)
     ne = st.sidebar.number_input("Nível Estático (m)", value=ne_auto)
     
-    # --- DADOS PARA O PROJETO (Aba 2) ---
+    # --- DADOS PARA O PROJETO ---
     st.sidebar.markdown("---")
     st.sidebar.title("2. Projeto Operacional")
     tempo_op = st.sidebar.number_input("Tempo Operação (h/dia)", 0.1, 24.0, 20.0)
@@ -112,7 +151,7 @@ if uploaded_file:
     diametro_edutor = st.sidebar.text_input("Diâmetro Edutor", "1 1/2 pol")
     prof_bomba = st.sidebar.number_input("Prof. Instalação (m)", value=ne + 20.0)
 
-    # --- PROCESSAMENTO (Igual) ---
+    # --- PROCESSAMENTO ---
     df_reb = df_full.iloc[3:58, [0, 1]].copy()
     df_reb.columns = ['t', 'nd']
     df_reb = df_reb.apply(pd.to_numeric, errors='coerce').dropna()
@@ -154,42 +193,50 @@ if uploaded_file:
 
     submergencia = prof_bomba - nd_final
 
+    # ================= PREPARAÇÃO DAS TABELAS (2 CASAS DECIMAIS) =================
+    # Bombeamento
+    df_bomb_clean = df_full.iloc[3:58, 0:4].copy()
+    df_bomb_clean.columns = ["t (min)", "N.D (m)", "s (m)", "r (m)"]
+    df_bomb_clean = df_bomb_clean.apply(pd.to_numeric, errors='coerce')
+    # Formatação visual para 2 casas
+    df_bomb_fmt = df_bomb_clean.map('{:.2f}'.format)
+    # Substituir nan por traço
+    df_bomb_fmt = df_bomb_fmt.replace('nan', '-')
+
+    # Recuperação
+    df_rec_clean = df_full.iloc[3:58, 6:13].copy()
+    df_rec_clean.columns = ["t'", "t", "ND", "NA", "r'", "s'", "t/t'"]
+    df_rec_clean = df_rec_clean.apply(pd.to_numeric, errors='coerce')
+    df_rec_fmt = df_rec_clean.map('{:.2f}'.format)
+    df_rec_fmt = df_rec_fmt.replace('nan', '-')
+
     # --- TABS ---
     tab1, tab2, tab3 = st.tabs(["📊 Dados do Teste", "📝 Usos e Demandas", "📥 Downloads"])
     
     with tab1:
-        # ================= CABEÇALHO PERSONALIZADO =================
         st.markdown("### 📋 Resumo do Teste de Bombeamento")
         
-        # Container com estilo visual (borda leve)
-        with st.container():
-            col_h1, col_h2, col_h3, col_h4 = st.columns(4)
-            
-            with col_h1:
-                st.markdown(f"**Cliente:** {cliente}")
-                st.markdown(f"**Município:** {municipio}")
-                st.markdown(f"**Aquífero:** {aquifero}")
-                st.markdown(f"**Execução:** {execucao}")
-            
-            with col_h2:
-                st.markdown(f"**Data Início:** {data_inicio.strftime('%d/%m/%Y')}")
-                st.markdown(f"**Data Término:** {data_fim.strftime('%d/%m/%Y')}")
-                st.markdown(f"**Profundidade:** {profundidade_poco} m")
-                st.markdown(f"**Crivo:** {crivo_bomba} m")
+        # Dados para o cabeçalho
+        dados_cabecalho = {
+            'cliente': cliente, 'municipio': municipio, 'aquifero': aquifero, 'execucao': execucao,
+            'data_ini': data_inicio.strftime('%d/%m/%Y'), 'data_fim': data_fim.strftime('%d/%m/%Y'),
+            'prof': profundidade_poco, 'crivo': crivo_bomba,
+            'ne': f"{ne:.2f}", 'nd': f"{nd_final:.2f}", 'q': f"{q:.2f}", 'tempo': tempo_bombeamento
+        }
 
-            with col_h3:
-                st.markdown(f"**Equipamento:** {tipo_equipamento}")
-                st.markdown(f"**Tempo Bomb.:** {tempo_bombeamento}")
-                st.markdown(f"**Vazão:** {q:.2f} m³/h")
-            
-            with col_h4:
-                st.markdown(f"**Nível Estático:** {ne:.2f} m")
-                st.markdown(f"**Nível Dinâmico:** {nd_final:.2f} m")
-                st.markdown(f"**Rebaixamento:** {s_total:.2f} m")
+        # Geração da Imagem do Cabeçalho
+        img_cabecalho_buf = gerar_imagem_cabecalho(dados_cabecalho)
+        
+        # Mostra o cabeçalho visualmente
+        st.image(img_cabecalho_buf, use_container_width=True)
+        
+        col_down_head, _ = st.columns([1, 3])
+        with col_down_head:
+            st.download_button("⬇️ Baixar Imagem Cabeçalho", img_cabecalho_buf, f"cabecalho_{cliente}.png", "image/png")
 
         st.divider()
 
-        # ================= GRÁFICOS E RESULTADOS =================
+        # GRÁFICOS
         c_graf, c_res = st.columns([2, 1])
         with c_graf:
             fig1, ax1 = plt.subplots(figsize=(8, 4))
@@ -206,43 +253,26 @@ if uploaded_file:
             st.pyplot(fig1)
         
         with c_res:
-            st.info("Resultados Calculados")
             st.metric("Transmissividade (T)", f"{T_reb_h:.9f} m²/h")
             st.metric("Cap. Específica", f"{cap_esp_reb:.6f} m³/h/m")
-            st.metric("Submergência", f"{submergencia:.2f} m", delta_color="normal" if submergencia > 2 else "inverse")
 
         st.divider()
 
-        # ================= TABELAS COMO IMAGEM =================
-        st.subheader("📷 Tabelas de Dados (Baixar como Imagem)")
-        
+        # TABELAS
+        st.subheader("📷 Tabelas (Formatadas 2 casas)")
         c_tab1, c_tab2 = st.columns(2)
         
-        # TABELA BOMBEAMENTO
         with c_tab1:
             st.markdown("**Bombeamento**")
-            df_show_bomb = df_full.iloc[3:58, 0:4].reset_index(drop=True)
-            df_show_bomb.columns = ["t (min)", "N.D (m)", "s (m)", "r (m)"]
-            
-            # Mostra na tela (interativo)
-            st.dataframe(df_show_bomb, height=300, use_container_width=True)
-            
-            # Botão Download Imagem
-            img_bomb = gerar_imagem_tabela(df_show_bomb, f"Bombeamento - {cliente}")
-            st.download_button("⬇️ Baixar Tabela Bombeamento (PNG)", img_bomb, f"tabela_bombeamento_{cliente}.png", "image/png")
+            st.dataframe(df_bomb_fmt, height=300, use_container_width=True)
+            img_bomb = gerar_imagem_tabela(df_bomb_fmt, f"Bombeamento - {cliente}")
+            st.download_button("⬇️ Baixar Tabela Bombeamento", img_bomb, f"tabela_bombeamento_{cliente}.png", "image/png")
 
-        # TABELA RECUPERAÇÃO
         with c_tab2:
             st.markdown("**Recuperação**")
-            df_show_rec = df_full.iloc[3:58, 6:13].reset_index(drop=True)
-            df_show_rec.columns = ["t'", "t", "ND", "NA", "r'", "s'", "t/t'"]
-            
-            # Mostra na tela
-            st.dataframe(df_show_rec, height=300, use_container_width=True)
-            
-            # Botão Download Imagem
-            img_rec = gerar_imagem_tabela(df_show_rec, f"Recuperação - {cliente}")
-            st.download_button("⬇️ Baixar Tabela Recuperação (PNG)", img_rec, f"tabela_recuperacao_{cliente}.png", "image/png")
+            st.dataframe(df_rec_fmt, height=300, use_container_width=True)
+            img_rec = gerar_imagem_tabela(df_rec_fmt, f"Recuperação - {cliente}")
+            st.download_button("⬇️ Baixar Tabela Recuperação", img_rec, f"tabela_recuperacao_{cliente}.png", "image/png")
 
     # --- ABA 2: USOS (Mantida igual) ---
     with tab2:
@@ -253,22 +283,15 @@ if uploaded_file:
             uc1, pc1 = st.columns([3, 1])
             uso1 = uc1.text_input("Uso 1", "Consumo Humano")
             porc1 = pc1.number_input("% Uso 1", 0, 100, 100, key="p1")
-            
             uc2, pc2 = st.columns([3, 1])
             uso2 = uc2.text_input("Uso 2", "Limpeza Geral")
             porc2 = pc2.number_input("% Uso 2", 0, 100, 0, key="p2")
-            
             uc3, pc3 = st.columns([3, 1])
             uso3 = uc3.text_input("Uso 3", "Combate a Incêndios")
             porc3 = pc3.number_input("% Uso 3", 0, 100, 0, key="p3")
-            
             uc4, pc4 = st.columns([3, 1])
             uso4 = uc4.text_input("Uso 4", "")
             porc4 = pc4.number_input("% Uso 4", 0, 100, 0, key="p4")
-
-            total_porc = porc1 + porc2 + porc3 + porc4
-            if total_porc != 100 and total_porc != 0:
-                st.warning(f"⚠️ Soma: {total_porc}%. Ideal: 100%.")
 
         with c2:
             st.subheader("Assistente de Justificativa")
@@ -308,12 +331,15 @@ if uploaded_file:
     with tab3:
         st.header("Gerar Documentos")
         
+        # PREPARAÇÃO DAS IMAGENS PARA O WORD
+        # 1. Gráfico Rebaixamento
         buffer_reb = io.BytesIO()
         fig1.savefig(buffer_reb, format='png', dpi=150)
         buffer_reb.seek(0)
         
+        # 2. Gráfico Recuperação
         buffer_rec = None
-        if not df_rec.empty and not df_rec.isnull().values.all():
+        if not df_rec.empty:
             fig2, ax2 = plt.subplots(figsize=(8, 4))
             ax2.scatter(df_rec['ratio'], df_rec['res'], color='green', s=20)
             if a_rec is not None:
@@ -323,10 +349,15 @@ if uploaded_file:
             ax2.set_xscale('log')
             ax2.invert_yaxis()
             ax2.grid(True, ls="--", alpha=0.4)
-            
             buffer_rec = io.BytesIO()
             fig2.savefig(buffer_rec, format='png', dpi=150)
             buffer_rec.seek(0)
+
+        # 3. Cabeçalho e Tabelas (Já gerados anteriormente nas variáveis: img_cabecalho_buf, img_bomb, img_rec)
+        # Precisamos garantir que o ponteiro do buffer esteja no zero para re-leitura
+        img_cabecalho_buf.seek(0)
+        img_bomb.seek(0)
+        img_rec.seek(0)
 
         ctx_base = {
             'cliente': cliente, 'municipio': municipio,
@@ -335,15 +366,13 @@ if uploaded_file:
             'transmissividade': format_transmissividade(T_reb_h),
         }
 
+        # --- MEMORIAL ---
         if st.button("📄 Baixar Memorial (.docx)"):
             try:
                 doc = DocxTemplate("template_memorial.docx")
                 ctx = ctx_base.copy()
                 img_reb_obj = InlineImage(doc, buffer_reb, width=Mm(150))
-                if buffer_rec:
-                    img_rec_obj = InlineImage(doc, buffer_rec, width=Mm(150))
-                else:
-                    img_rec_obj = "Gráfico de Recuperação não gerado"
+                img_rec_obj = InlineImage(doc, buffer_rec, width=Mm(150)) if buffer_rec else "N/A"
 
                 ctx.update({
                     'ds_linha': format_padrao(ds_reb),
@@ -366,10 +395,17 @@ if uploaded_file:
 
         st.divider()
 
+        # --- PROJETO OPERACIONAL ---
         if st.button("📄 Baixar Projeto (.docx)"):
             try:
                 doc_proj = DocxTemplate("template_projeto.docx")
                 ctx_proj = ctx_base.copy()
+                
+                # INSERÇÃO DAS NOVAS IMAGENS (CABEÇALHO E TABELAS)
+                img_cabecalho_word = InlineImage(doc_proj, img_cabecalho_buf, width=Mm(160))
+                img_bomb_word = InlineImage(doc_proj, img_bomb, width=Mm(160))
+                img_rec_word = InlineImage(doc_proj, img_rec, width=Mm(160))
+
                 ctx_proj.update({
                     'modelo_bomba': modelo_bomba,
                     'potencia': potencia, 'estagios': num_estagios,
@@ -382,7 +418,12 @@ if uploaded_file:
                     'uso2': uso2, 'porc2': str(porc2),
                     'uso3': uso3, 'porc3': str(porc3),
                     'uso4': uso4, 'porc4': str(porc4),
-                    'justificativa': justificativa
+                    'justificativa': justificativa,
+                    
+                    # NOVAS TAGS PARA O TEMPLATE
+                    'img_cabecalho': img_cabecalho_word,
+                    'img_tabela_bomb': img_bomb_word,
+                    'img_tabela_rec': img_rec_word
                 })
                 doc_proj.render(ctx_proj)
                 bio_proj = io.BytesIO()
