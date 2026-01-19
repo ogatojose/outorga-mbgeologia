@@ -8,7 +8,7 @@ from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
 import io
 
-# --- FUNÇÕES DE FORMATAÇÃO ---
+# --- FUNÇÕES ---
 def modelo_logaritmico(x, a, b):
     return a * np.log(x) + b
 
@@ -37,57 +37,46 @@ def analisar_dados_log(x_data, y_data, x1=10, x2=100):
     except:
         return None, None, 0, 0
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Central de Outorgas", layout="wide")
 st.title("🌊 Central de Outorgas e Projetos")
 
-# ==================================================
-# BARRA LATERAL - ENTRADA DE DADOS
-# ==================================================
+# --- SIDEBAR ---
 st.sidebar.title("1. Dados Gerais")
 cliente = st.sidebar.text_input("Cliente", "Cliente Exemplo")
 municipio = st.sidebar.text_input("Município", "Tapera/RS")
 uploaded_file = st.file_uploader("Arquivo Excel (.xlsx)", type=["xlsx"])
 
-# Variáveis globais de inicialização
 q = ne = nd_final = transmissividade = s_total = 0
 
 if uploaded_file:
     df_full = pd.read_excel(uploaded_file, header=None)
-    
-    # --- Leitura Automática ---
     try:
-        q_auto = float(df_full.iloc[2, 4]) # E3
-        ne_auto = float(df_full.iloc[2, 1]) # B3
+        q_auto = float(df_full.iloc[2, 4]) 
+        ne_auto = float(df_full.iloc[2, 1])
         st.sidebar.success(f"Lido: Q={q_auto} | NE={ne_auto}")
     except:
         q_auto = 6.0
         ne_auto = 0.0
         
-    q = st.sidebar.number_input("Vazão do Poço (m³/h)", value=q_auto)
+    q = st.sidebar.number_input("Vazão (m³/h)", value=q_auto)
     ne = st.sidebar.number_input("Nível Estático (m)", value=ne_auto)
 
-    # --- INPUTS DO PROJETO OPERACIONAL ---
+    # --- PROJETO ---
     st.sidebar.markdown("---")
-    st.sidebar.title("2. Regime de Operação")
+    st.sidebar.title("2. Regime e Equipamento")
     
-    # 1. Tempo e Vazão Diária
-    tempo_op = st.sidebar.slider("Tempo de Operação Diária (horas)", 1, 24, 20)
+    tempo_op = st.sidebar.slider("Horas/dia", 1, 24, 20)
     vazao_diaria = q * tempo_op
-    st.sidebar.info(f"Volume Diário Calculado: **{vazao_diaria:.2f} m³/dia**")
+    st.sidebar.info(f"Q Diária: {vazao_diaria:.2f} m³/dia")
 
-    # 2. Definição da Bomba
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Equipamento")
-    modelo_bomba = st.sidebar.text_input("Modelo da Bomba", "Ebara 4BPS")
-    potencia = st.sidebar.text_input("Potência (cv)", "1.5 cv")
-    num_estagios = st.sidebar.text_input("Nº de Estágios", "12")
+    modelo_bomba = st.sidebar.text_input("Modelo Bomba", "Ebara 4BPS")
+    potencia = st.sidebar.text_input("Potência", "1.5 cv")
+    num_estagios = st.sidebar.text_input("Estágios", "12")
     diametro_edutor = st.sidebar.text_input("Diâmetro Edutor", "1 1/2 pol")
     prof_bomba = st.sidebar.number_input("Profundidade Instalação (m)", value=ne + 20.0)
 
-    # ==================================================
-    # PROCESSAMENTO HIDRÁULICO (Igual ao anterior)
-    # ==================================================
+    # --- PROCESSAMENTO ---
     df_reb = df_full.iloc[3:58, [0, 1]].copy()
     df_reb.columns = ['t', 'nd']
     df_reb = df_reb.apply(pd.to_numeric, errors='coerce').dropna()
@@ -102,6 +91,7 @@ if uploaded_file:
     except:
         df_rec = pd.DataFrame()
 
+    # Cálculos
     a_reb, b_reb, r2_reb, ds_reb = analisar_dados_log(df_reb['t'], df_reb['nd'])
     
     if ds_reb > 0:
@@ -125,90 +115,68 @@ if uploaded_file:
             T_rec_h = T_rec_s = cap_esp_rec = 0
     else:
         T_rec_h = T_rec_s = cap_esp_rec = ds_rec = 0
+        a_rec = None
 
     submergencia = prof_bomba - nd_final
-    cor_alerta = "green" if submergencia > 2 else "red"
 
-    # ==================================================
-    # INTERFACE PRINCIPAL
-    # ==================================================
+    # --- INTERFACE ---
+    tab1, tab2, tab3 = st.tabs(["📉 Gráficos", "📝 Justificativa", "📥 Downloads"])
     
-    tab1, tab2, tab3 = st.tabs(["📉 Análise Hidráulica", "📝 Detalhes do Uso", "📥 Downloads"])
-    
-    # --- ABA 1: GRÁFICOS ---
     with tab1:
         col1, col2 = st.columns([2, 1])
         with col1:
             fig1, ax1 = plt.subplots(figsize=(8, 4))
-            ax1.scatter(df_reb['t'], df_reb['nd'], color='navy', s=20, label='Dados')
+            ax1.scatter(df_reb['t'], df_reb['nd'], color='navy', s=20)
             if a_reb is not None:
                 x_fit = np.logspace(np.log10(min(df_reb['t'])), np.log10(max(df_reb['t'])), 100)
                 y_fit = modelo_logaritmico(x_fit, a_reb, b_reb)
-                ax1.plot(x_fit, y_fit, 'r--', label='Ajuste Log')
+                ax1.plot(x_fit, y_fit, 'r--')
             ax1.set_xscale('log')
             ax1.set_xlabel('Tempo (min)')
             ax1.set_ylabel('Nível (m)')
             ax1.invert_yaxis()
-            ax1.grid(True, which="both", ls="--", alpha=0.4)
+            ax1.grid(True, ls="--", alpha=0.4)
             st.pyplot(fig1)
-
         with col2:
             st.metric("T (m²/h)", f"{T_reb_h:.9f}")
-            st.metric("C. Específica", f"{cap_esp_reb:.6f}")
             st.metric("Submergência", f"{submergencia:.2f} m", delta_color="normal" if submergencia > 2 else "inverse")
 
-    # --- ABA 2: USOS E JUSTIFICATIVA (NOVO) ---
     with tab2:
-        st.header("Definição dos Usos da Água")
-        
+        st.header("Usos e Justificativa")
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Usos Pretendidos")
             uso1 = st.text_input("Uso 1", "Consumo Humano")
             uso2 = st.text_input("Uso 2", "Dessedentação Animal")
             uso3 = st.text_input("Uso 3", "")
             uso4 = st.text_input("Uso 4", "")
-        
         with c2:
-            st.subheader("Justificativa da Demanda")
-            st.info("💡 Assistente de Redação Técnica")
+            tipo = st.selectbox("Assistente de Texto:", 
+                              ["Personalizado", "Consumo Humano", "Irrigação", "Indústria", "Misto"])
             
-            # Opções de templates para ajudar na escrita
-            tipo_demanda = st.selectbox("Selecione o tipo de justificativa para gerar um rascunho:", 
-                                      ["Personalizado (Escrever do zero)", 
-                                       "Consumo Humano (Padrão)", 
-                                       "Irrigação (Padrão)", 
-                                       "Indústria/Processos", 
-                                       "Misto (Humano + Animal)"])
+            sugestao = ""
+            if tipo == "Consumo Humano":
+                sugestao = "A demanda justifica-se pela necessidade de abastecimento contínuo e potável para atendimento das necessidades básicas dos residentes, visando a segurança hídrica e sanitária."
+            elif tipo == "Irrigação":
+                sugestao = "A demanda justifica-se pela necessidade de irrigação complementar para incremento da produtividade agrícola, garantindo o desenvolvimento das culturas em períodos de estiagem."
+            elif tipo == "Indústria":
+                sugestao = "A demanda justifica-se para uso em processos industriais e higienização, insumo fundamental para a manutenção das atividades produtivas."
+            elif tipo == "Misto":
+                sugestao = "A demanda justifica-se para o abastecimento da sede e dessedentação animal, garantindo o bem-estar animal e condições sanitárias adequadas."
             
-            texto_sugerido = ""
-            if tipo_demanda == "Consumo Humano (Padrão)":
-                texto_sugerido = "A demanda justifica-se pela necessidade de abastecimento contínuo e potável para atendimento das necessidades básicas dos residentes/usuários do local, visando a segurança hídrica e sanitária."
-            elif tipo_demanda == "Irrigação (Padrão)":
-                texto_sugerido = "A demanda justifica-se pela necessidade de irrigação complementar para incremento da produtividade agrícola, garantindo o desenvolvimento das culturas mesmo em períodos de estiagem."
-            elif tipo_demanda == "Indústria/Processos":
-                texto_sugerido = "A demanda justifica-se para uso em processos industriais e higienização de instalações, sendo insumo fundamental para a manutenção das atividades produtivas da empresa."
-            elif tipo_demanda == "Misto (Humano + Animal)":
-                texto_sugerido = "A demanda justifica-se para o abastecimento da sede da propriedade e dessedentação animal, garantindo o bem-estar animal e as condições sanitárias adequadas."
-            
-            # Caixa de texto editável (se o usuário selecionou um template, ele já preenche)
-            justificativa_final = st.text_area("Edite o texto final abaixo:", value=texto_sugerido, height=150)
-            
-            if justificativa_final:
-                st.success("Texto pronto para o relatório!")
+            justificativa = st.text_area("Texto Final:", value=sugestao, height=150)
 
-    # --- ABA 3: DOWNLOADS ---
     with tab3:
         st.header("Gerar Documentos")
         
-        # Prepara imagens
-        img_reb = io.BytesIO()
-        fig1.savefig(img_reb, format='png', dpi=150)
-        img_reb.seek(0)
+        # --- PREPARAÇÃO DOS GRÁFICOS (FIXO) ---
+        # 1. Gráfico Rebaixamento
+        buffer_reb = io.BytesIO()
+        fig1.savefig(buffer_reb, format='png', dpi=150)
+        buffer_reb.seek(0)
         
-        img_rec_word = "Gráfico ausente"
+        # 2. Gráfico Recuperação (Se existir)
+        buffer_rec = None
         if not df_rec.empty and not df_rec.isnull().values.all():
-             # Recriar fig2 para garantir que existe
             fig2, ax2 = plt.subplots(figsize=(8, 4))
             ax2.scatter(df_rec['ratio'], df_rec['res'], color='green', s=20)
             if a_rec is not None:
@@ -217,79 +185,71 @@ if uploaded_file:
                  ax2.plot(x_fit2, y_fit2, 'r--')
             ax2.set_xscale('log')
             ax2.invert_yaxis()
+            ax2.grid(True, ls="--", alpha=0.4)
             
-            img_rec = io.BytesIO()
-            fig2.savefig(img_rec, format='png', dpi=150)
-            img_rec.seek(0)
-            img_rec_word = InlineImage(doc, img_rec, width=Mm(150)) if 'doc' in locals() else img_rec # Ajuste técnico
+            buffer_rec = io.BytesIO()
+            fig2.savefig(buffer_rec, format='png', dpi=150)
+            buffer_rec.seek(0)
 
         # Contexto Base
-        contexto_base = {
-            'cliente': cliente,
-            'municipio': municipio,
-            'ne': format_padrao(ne),
-            'nd': format_padrao(nd_final),
-            'q': format_padrao(q),
-            's_total': format_padrao(s_total),
+        ctx_base = {
+            'cliente': cliente, 'municipio': municipio,
+            'ne': format_padrao(ne), 'nd': format_padrao(nd_final),
+            'q': format_padrao(q), 's_total': format_padrao(s_total),
             'transmissividade': format_transmissividade(T_reb_h),
         }
 
-        # BOTÃO MEMORIAL
+        # --- BOTÃO 1: MEMORIAL ---
         if st.button("📄 Baixar Memorial (.docx)"):
             try:
                 doc = DocxTemplate("template_memorial.docx")
-                ctx = contexto_base.copy()
+                ctx = ctx_base.copy()
                 
-                # Tratamento imagem recuperação para o memorial
-                if not isinstance(img_rec_word, str):
-                     img_rec_word_mem = InlineImage(doc, img_rec, width=Mm(150))
+                # Inserir imagens AGORA (seguro)
+                img_reb_obj = InlineImage(doc, buffer_reb, width=Mm(150))
+                if buffer_rec:
+                    img_rec_obj = InlineImage(doc, buffer_rec, width=Mm(150))
                 else:
-                     img_rec_word_mem = "N/A"
+                    img_rec_obj = "Gráfico de Recuperação não gerado"
 
                 ctx.update({
                     'ds_linha': format_padrao(ds_reb),
                     't_reb_s': format_transmissividade(T_reb_s),
                     'ce_reb': format_cap_especifica(cap_esp_reb),
                     'vazao_otima': format_padrao(vazao_otima),
-                    'grafico_rebaixamento': InlineImage(doc, img_reb, width=Mm(150)),
+                    'grafico_rebaixamento': img_reb_obj,
                     'ds_rec': format_padrao(ds_rec),
                     't_rec_h': format_transmissividade(T_rec_h),
                     't_rec_s': format_transmissividade(T_rec_s),
                     'ce_rec': format_cap_especifica(cap_esp_rec),
-                    'grafico_recuperacao': img_rec_word_mem
+                    'grafico_recuperacao': img_rec_obj
                 })
+                
                 doc.render(ctx)
                 bio = io.BytesIO()
                 doc.save(bio)
                 st.download_button("⬇️ Download Memorial", bio.getvalue(), f"Memorial_{cliente}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             except Exception as e:
-                st.error(f"Erro Memorial: {e}")
+                st.error(f"Erro no Memorial: {e}")
 
         st.divider()
 
-        # BOTÃO PROJETO
-        if st.button("📄 Baixar Projeto Operacional (.docx)"):
+        # --- BOTÃO 2: PROJETO ---
+        if st.button("📄 Baixar Projeto (.docx)"):
             try:
                 doc_proj = DocxTemplate("template_projeto.docx")
-                ctx_proj = contexto_base.copy()
+                ctx_proj = ctx_base.copy()
                 
-                # Atualizando com os novos dados
                 ctx_proj.update({
                     'modelo_bomba': modelo_bomba,
-                    'potencia': potencia,
-                    'estagios': num_estagios,
+                    'potencia': potencia, 'estagios': num_estagios,
                     'diametro_edutor': diametro_edutor,
                     'prof_bomba': format_padrao(prof_bomba),
                     'submergencia': format_padrao(submergencia),
-                    
-                    # NOVOS DADOS
-                    'tempo': f"{tempo_op}",          # Inteiro ou float
+                    'tempo': f"{tempo_op}",
                     'q_dia': format_padrao(vazao_diaria),
-                    'uso1': uso1 if uso1 else "",
-                    'uso2': uso2 if uso2 else "",
-                    'uso3': uso3 if uso3 else "",
-                    'uso4': uso4 if uso4 else "",
-                    'justificativa': justificativa_final
+                    'uso1': uso1, 'uso2': uso2, 'uso3': uso3, 'uso4': uso4,
+                    'justificativa': justificativa
                 })
                 
                 doc_proj.render(ctx_proj)
@@ -297,4 +257,4 @@ if uploaded_file:
                 doc_proj.save(bio_proj)
                 st.download_button("⬇️ Download Projeto", bio_proj.getvalue(), f"Projeto_{cliente}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             except Exception as e:
-                st.error(f"Erro Projeto: {e}")
+                st.error(f"Erro no Projeto: {e}")
