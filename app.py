@@ -101,4 +101,222 @@ if uploaded_file:
         nd_final = df_reb['nd'].max()
         s_total = nd_final - ne
         vazao_otima = cap_esp_reb * s_total
-    else
+    else:
+        T_reb_h = T_reb_s = cap_esp_reb = vazao_otima = 0
+        nd_final = ne
+
+    if not df_rec.empty:
+        a_rec, b_rec, r2_rec, ds_rec = analisar_dados_log(df_rec['ratio'], df_rec['res'])
+        if ds_rec > 0:
+            T_rec_h = (0.183 * q) / ds_rec
+            T_rec_s = T_rec_h / 3600
+            cap_esp_rec = T_rec_h * 0.8
+        else:
+            T_rec_h = T_rec_s = cap_esp_rec = 0
+    else:
+        T_rec_h = T_rec_s = cap_esp_rec = ds_rec = 0
+        a_rec = None
+
+    submergencia = prof_bomba - nd_final
+
+    # --- INTERFACE ---
+    tab1, tab2, tab3 = st.tabs(["📉 Gráficos", "📝 Usos e Demandas", "📥 Downloads"])
+    
+    with tab1:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            fig1, ax1 = plt.subplots(figsize=(8, 4))
+            ax1.scatter(df_reb['t'], df_reb['nd'], color='navy', s=20)
+            if a_reb is not None:
+                x_fit = np.logspace(np.log10(min(df_reb['t'])), np.log10(max(df_reb['t'])), 100)
+                y_fit = modelo_logaritmico(x_fit, a_reb, b_reb)
+                ax1.plot(x_fit, y_fit, 'r--')
+            ax1.set_xscale('log')
+            ax1.set_xlabel('Tempo (min)')
+            ax1.set_ylabel('Nível (m)')
+            ax1.invert_yaxis()
+            ax1.grid(True, ls="--", alpha=0.4)
+            st.pyplot(fig1)
+        with col2:
+            st.metric("T (m²/h)", f"{T_reb_h:.9f}")
+            st.metric("Submergência", f"{submergencia:.2f} m", delta_color="normal" if submergencia > 2 else "inverse")
+
+    # --- ABA 2: LOGICA DE USOS NOVA ---
+    with tab2:
+        st.header("Definição dos Usos e Porcentagens")
+        
+        # COLUNA 1: USOS E PORCENTAGENS
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.subheader("Finalidades")
+            
+            # Linha 1
+            uc1, pc1 = st.columns([3, 1])
+            uso1 = uc1.text_input("Uso 1", "Consumo Humano")
+            porc1 = pc1.number_input("% Uso 1", 0, 100, 100, key="p1")
+            
+            # Linha 2
+            uc2, pc2 = st.columns([3, 1])
+            uso2 = uc2.text_input("Uso 2", "Limpeza Geral")
+            porc2 = pc2.number_input("% Uso 2", 0, 100, 0, key="p2")
+            
+            # Linha 3
+            uc3, pc3 = st.columns([3, 1])
+            uso3 = uc3.text_input("Uso 3", "Combate a Incêndios")
+            porc3 = pc3.number_input("% Uso 3", 0, 100, 0, key="p3")
+            
+            # Linha 4
+            uc4, pc4 = st.columns([3, 1])
+            uso4 = uc4.text_input("Uso 4", "")
+            porc4 = pc4.number_input("% Uso 4", 0, 100, 0, key="p4")
+
+            # Validação simples
+            total_porc = porc1 + porc2 + porc3 + porc4
+            if total_porc != 100 and total_porc != 0:
+                st.warning(f"⚠️ A soma das porcentagens está em {total_porc}%. Ideal seria 100%.")
+
+        # COLUNA 2: ASSISTENTE DE TEXTO INTELIGENTE
+        with c2:
+            st.subheader("Assistente de Justificativa")
+            st.info("Selecione o tipo principal para gerar o cálculo e o texto:")
+            
+            tipo = st.selectbox("Tipo de Demanda:", 
+                              ["Personalizado", 
+                               "Consumo Humano", 
+                               "Abastecimento Público", 
+                               "Limpeza Geral",
+                               "Combate a Incêndios",
+                               "Irrigação", 
+                               "Dessedentação Animal"])
+            
+            sugestao = ""
+            
+            # LÓGICA DE CÁLCULO POPULACIONAL (0,18 m³/hab/dia)
+            if tipo == "Consumo Humano":
+                n_pessoas = st.number_input("Número de Pessoas (Residentes/Usuários)", min_value=1, value=4)
+                vol_pessoas = n_pessoas * 0.18
+                sugestao = (f"A demanda justifica-se pela necessidade de abastecimento contínuo e potável para atendimento "
+                            f"das necessidades básicas de {n_pessoas} pessoas, totalizando um consumo estimado de "
+                            f"{format_padrao(vol_pessoas)} m³/dia (considerando 0,18 m³/hab/dia), visando a segurança hídrica e sanitária.")
+            
+            elif tipo == "Abastecimento Público":
+                n_pessoas = st.number_input("População Atendida", min_value=1, value=50)
+                vol_pessoas = n_pessoas * 0.18
+                sugestao = (f"O poço destina-se ao abastecimento público, viabilizado pela administração municipal para "
+                            f"atendimento da localidade. Estima-se o atendimento de {n_pessoas} habitantes, "
+                            f"gerando uma demanda de {format_padrao(vol_pessoas)} m³/dia (base 0,18 m³/hab/dia).")
+            
+            elif tipo == "Limpeza Geral":
+                sugestao = ("A demanda justifica-se pela necessidade de manutenção e operacionalização básica do empreendimento, "
+                            "incluindo a limpeza geral das instalações, banheiros e pátios, garantindo as condições de higiene.")
+
+            elif tipo == "Combate a Incêndios":
+                sugestao = ("A demanda justifica-se pela necessidade de abastecimento e manutenção da reserva técnica de incêndio (RTI), "
+                            "visando a adequação do estabelecimento às normas de segurança e prevenção (PPCI), garantindo a proteção da edificação e dos usuários.")
+            
+            elif tipo == "Irrigação":
+                sugestao = ("A demanda justifica-se pela necessidade de irrigação complementar para incremento da produtividade "
+                            "agrícola, garantindo o desenvolvimento das culturas mesmo em períodos de estiagem.")
+            
+            elif tipo == "Dessedentação Animal":
+                sugestao = ("A demanda justifica-se para a dessedentação animal, garantindo o bem-estar e o desenvolvimento "
+                            "do rebanho, bem como as condições sanitárias das instalações.")
+            
+            justificativa = st.text_area("Texto Final (Editável):", value=sugestao, height=200)
+
+    with tab3:
+        st.header("Gerar Documentos")
+        
+        # --- PREPARAÇÃO DOS GRÁFICOS ---
+        buffer_reb = io.BytesIO()
+        fig1.savefig(buffer_reb, format='png', dpi=150)
+        buffer_reb.seek(0)
+        
+        buffer_rec = None
+        if not df_rec.empty and not df_rec.isnull().values.all():
+            fig2, ax2 = plt.subplots(figsize=(8, 4))
+            ax2.scatter(df_rec['ratio'], df_rec['res'], color='green', s=20)
+            if a_rec is not None:
+                 x_fit2 = np.logspace(np.log10(min(df_rec['ratio'])), np.log10(max(df_rec['ratio'])), 100)
+                 y_fit2 = modelo_logaritmico(x_fit2, a_rec, b_rec)
+                 ax2.plot(x_fit2, y_fit2, 'r--')
+            ax2.set_xscale('log')
+            ax2.invert_yaxis()
+            ax2.grid(True, ls="--", alpha=0.4)
+            
+            buffer_rec = io.BytesIO()
+            fig2.savefig(buffer_rec, format='png', dpi=150)
+            buffer_rec.seek(0)
+
+        # Contexto Base
+        ctx_base = {
+            'cliente': cliente, 'municipio': municipio,
+            'ne': format_padrao(ne), 'nd': format_padrao(nd_final),
+            'q': format_padrao(q), 's_total': format_padrao(s_total),
+            'transmissividade': format_transmissividade(T_reb_h),
+        }
+
+        # --- BOTÃO 1: MEMORIAL ---
+        if st.button("📄 Baixar Memorial (.docx)"):
+            try:
+                doc = DocxTemplate("template_memorial.docx")
+                ctx = ctx_base.copy()
+                
+                img_reb_obj = InlineImage(doc, buffer_reb, width=Mm(150))
+                if buffer_rec:
+                    img_rec_obj = InlineImage(doc, buffer_rec, width=Mm(150))
+                else:
+                    img_rec_obj = "Gráfico de Recuperação não gerado"
+
+                ctx.update({
+                    'ds_linha': format_padrao(ds_reb),
+                    't_reb_s': format_transmissividade(T_reb_s),
+                    'ce_reb': format_cap_especifica(cap_esp_reb),
+                    'vazao_otima': format_padrao(vazao_otima),
+                    'grafico_rebaixamento': img_reb_obj,
+                    'ds_rec': format_padrao(ds_rec),
+                    't_rec_h': format_transmissividade(T_rec_h),
+                    't_rec_s': format_transmissividade(T_rec_s),
+                    'ce_rec': format_cap_especifica(cap_esp_rec),
+                    'grafico_recuperacao': img_rec_obj
+                })
+                
+                doc.render(ctx)
+                bio = io.BytesIO()
+                doc.save(bio)
+                st.download_button("⬇️ Download Memorial", bio.getvalue(), f"Memorial_{cliente}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            except Exception as e:
+                st.error(f"Erro no Memorial: {e}")
+
+        st.divider()
+
+        # --- BOTÃO 2: PROJETO ---
+        if st.button("📄 Baixar Projeto (.docx)"):
+            try:
+                doc_proj = DocxTemplate("template_projeto.docx")
+                ctx_proj = ctx_base.copy()
+                
+                ctx_proj.update({
+                    'modelo_bomba': modelo_bomba,
+                    'potencia': potencia, 'estagios': num_estagios,
+                    'diametro_edutor': diametro_edutor,
+                    'prof_bomba': format_padrao(prof_bomba),
+                    'submergencia': format_padrao(submergencia),
+                    'tempo': f"{tempo_op}",
+                    'q_dia': format_padrao(vazao_diaria),
+                    
+                    # USOS E PORCENTAGENS
+                    'uso1': uso1, 'porc1': str(porc1),
+                    'uso2': uso2, 'porc2': str(porc2),
+                    'uso3': uso3, 'porc3': str(porc3),
+                    'uso4': uso4, 'porc4': str(porc4),
+                    
+                    'justificativa': justificativa
+                })
+                
+                doc_proj.render(ctx_proj)
+                bio_proj = io.BytesIO()
+                doc_proj.save(bio_proj)
+                st.download_button("⬇️ Download Projeto", bio_proj.getvalue(), f"Projeto_{cliente}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            except Exception as e:
+                st.error(f"Erro no Projeto: {e}")
