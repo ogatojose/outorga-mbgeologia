@@ -18,6 +18,7 @@ def format_numero(valor):
 
 def format_cientifico(valor):
     if valor is None: return "-"
+    # Formatação científica segura
     return f"{valor:.2e}".replace('.', ',')
 
 def analisar_dados_log(x_data, y_data, x1=10, x2=100):
@@ -89,11 +90,7 @@ if uploaded_file:
         if ds_reb > 0:
             T_reb_h = (0.183 * q) / ds_reb
             T_reb_s = T_reb_h / 3600
-            
-            # --- CORREÇÃO SOLICITADA: C_e = T * 0.8 ---
-            cap_esp_reb = T_reb_h * 0.8
-            
-            # Vazão Ótima = C_e * Disponibilidade (ou mantemos a lógica anterior que dá no mesmo)
+            cap_esp_reb = T_reb_h * 0.8 # Correção Logan
             s_max_reb = df_reb['nd'].max() - ne
             vazao_otima = cap_esp_reb * s_max_reb
         else:
@@ -121,4 +118,99 @@ if uploaded_file:
         with col1b:
             st.subheader("Resultados Rebaixamento")
             st.metric("Transmissividade (m²/h)", f"{T_reb_h:.4f}")
-            st.metric("Transmissividade (m²/s)", f"{T_reb_s:.2e
+            # A linha abaixo foi corrigida para não quebrar
+            st.metric("Transmissividade (m²/s)", f"{T_reb_s:.2e}")
+            st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_reb:.4f}", delta="Fórmula T * 0.8")
+            st.metric("Vazão Ótima Calculada", f"{vazao_otima:.2f} m³/h")
+
+    # 2. RECUPERAÇÃO
+    with tab2:
+        col2a, col2b = st.columns([2, 1])
+        if not df_rec.empty:
+            a_rec, b_rec, r2_rec, ds_rec = analisar_dados_log(df_rec['ratio'], df_rec['res'])
+            
+            if ds_rec > 0:
+                T_rec_h = (0.183 * q) / ds_rec
+                T_rec_s = T_rec_h / 3600
+                cap_esp_rec = T_rec_h * 0.8 # Correção Logan
+            else:
+                T_rec_h = T_rec_s = cap_esp_rec = 0
+                
+            with col2a:
+                fig2, ax2 = plt.subplots(figsize=(8, 5))
+                ax2.scatter(df_rec['ratio'], df_rec['res'], color='green', s=20, label='Dados')
+                if a_rec is not None:
+                    x_fit2 = np.logspace(np.log10(min(df_rec['ratio'])), np.log10(max(df_rec['ratio'])), 100)
+                    y_fit2 = modelo_logaritmico(x_fit2, a_rec, b_rec)
+                    ax2.plot(x_fit2, y_fit2, 'r--', label='Ajuste Log')
+                    texto2 = (f"y = {a_rec:.4f}ln(x) + {b_rec:.4f}\n"
+                              f"R² = {r2_rec:.4f}\n"
+                              f"ΔS' = {ds_rec:.4f} m")
+                    ax2.text(0.02, 0.98, texto2, transform=ax2.transAxes, 
+                             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+                ax2.set_xscale('log')
+                ax2.set_xlabel("Razão t/t' (Adimensional)")
+                ax2.set_ylabel("Rebaixamento Residual (m)")
+                ax2.grid(True, which="both", ls="--", alpha=0.4)
+                st.pyplot(fig2)
+                
+            with col2b:
+                st.subheader("Resultados Recuperação")
+                st.metric("Transmissividade (m²/h)", f"{T_rec_h:.4f}")
+                st.metric("Transmissividade (m²/s)", f"{T_rec_s:.2e}")
+                st.metric("Cap. Específica (m³/h/m)", f"{cap_esp_rec:.4f}", delta="Fórmula T * 0.8")
+        else:
+            st.warning("Dados de recuperação ausentes.")
+            T_rec_h = T_rec_s = cap_esp_rec = ds_rec = 0
+
+    # --- WORD ---
+    st.divider()
+    if st.button("📄 Baixar Relatório Final"):
+        try:
+            doc = DocxTemplate("template_memorial.docx")
+            
+            img_reb = io.BytesIO()
+            fig1.savefig(img_reb, format='png', dpi=150)
+            img_reb.seek(0)
+            
+            img_rec_word = "Gráfico ausente"
+            if not df_rec.empty:
+                img_rec = io.BytesIO()
+                fig2.savefig(img_rec, format='png', dpi=150)
+                img_rec.seek(0)
+                img_rec_word = InlineImage(doc, img_rec, width=Mm(150))
+
+            contexto = {
+                'cliente': cliente,
+                'municipio': municipio,
+                'ne': format_numero(ne),
+                'q': format_numero(q),
+                # Rebaixamento
+                'nd': format_numero(df_reb['nd'].max()),
+                's_total': format_numero(s_max_reb),
+                'ds_linha': format_numero(ds_reb),
+                'transmissividade': format_numero(T_reb_h),
+                't_reb_s': format_cientifico(T_reb_s),
+                'ce_reb': format_numero(cap_esp_reb),
+                'vazao_otima': format_numero(vazao_otima),
+                'grafico_rebaixamento': InlineImage(doc, img_reb, width=Mm(150)),
+                # Recuperação
+                'ds_rec': format_numero(ds_rec),
+                't_rec_h': format_numero(T_rec_h),
+                't_rec_s': format_cientifico(T_rec_s),
+                'ce_rec': format_numero(cap_esp_rec),
+                'grafico_recuperacao': img_rec_word
+            }
+            
+            doc.render(contexto)
+            bio = io.BytesIO()
+            doc.save(bio)
+            
+            st.download_button(
+                label="⬇️ Download .docx",
+                data=bio.getvalue(),
+                file_name=f"Memorial_{cliente}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        except Exception as e:
+            st.error(f"Erro no template: {e}")
