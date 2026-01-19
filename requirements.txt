@@ -5,3 +5,4 @@ python-docx
 docxtpl
 matplotlib
 scipy
+scikit-learn
