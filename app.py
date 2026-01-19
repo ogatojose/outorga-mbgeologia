@@ -66,7 +66,9 @@ if uploaded_file:
     st.sidebar.markdown("---")
     st.sidebar.title("2. Regime e Equipamento")
     
-    tempo_op = st.sidebar.slider("Horas/dia", 1, 24, 20)
+    # MUDANÇA 1: Caixa de digitação para o tempo (permite decimais, ex: 0.5)
+    tempo_op = st.sidebar.number_input("Tempo de Operação (horas/dia)", min_value=0.01, max_value=24.0, value=20.0, step=0.1, format="%.2f")
+    
     vazao_diaria = q * tempo_op
     st.sidebar.info(f"Q Diária: {vazao_diaria:.2f} m³/dia")
 
@@ -120,9 +122,10 @@ if uploaded_file:
     submergencia = prof_bomba - nd_final
 
     # --- INTERFACE ---
-    tab1, tab2, tab3 = st.tabs(["📉 Gráficos", "📝 Usos e Demandas", "📥 Downloads"])
+    tab1, tab2, tab3 = st.tabs(["📉 Gráficos e Dados", "📝 Usos e Demandas", "📥 Downloads"])
     
     with tab1:
+        # SEÇÃO 1: GRÁFICOS
         col1, col2 = st.columns([2, 1])
         with col1:
             fig1, ax1 = plt.subplots(figsize=(8, 4))
@@ -140,94 +143,92 @@ if uploaded_file:
         with col2:
             st.metric("T (m²/h)", f"{T_reb_h:.9f}")
             st.metric("Submergência", f"{submergencia:.2f} m", delta_color="normal" if submergencia > 2 else "inverse")
+        
+        # MUDANÇA 2: TABELAS DE DADOS
+        st.divider()
+        st.subheader("📋 Dados Brutos da Planilha (Linhas 4 a 58)")
+        
+        c_tab1, c_tab2 = st.columns(2)
+        
+        with c_tab1:
+            st.markdown("**Bombeamento (Colunas A, B, C, D)**")
+            # iloc usa índices 0,1,2,3 para colunas A,B,C,D
+            df_show_bomb = df_full.iloc[3:58, 0:4].reset_index(drop=True)
+            # Tentativa de renomear para ficar legível (opcional)
+            df_show_bomb.columns = ["t (min)", "N.D (m)", "s (m)", "Recup (m)"] 
+            st.dataframe(df_show_bomb, use_container_width=True, height=300)
+            
+        with c_tab2:
+            st.markdown("**Recuperação (Colunas G a M)**")
+            # iloc usa índices 6 a 12 para colunas G,H,I,J,K,L,M
+            df_show_rec = df_full.iloc[3:58, 6:13].reset_index(drop=True)
+            df_show_rec.columns = ["G", "H", "I", "J (N.A)", "K", "L", "M (t/t')"]
+            st.dataframe(df_show_rec, use_container_width=True, height=300)
 
     # --- ABA 2: LOGICA DE USOS NOVA ---
     with tab2:
         st.header("Definição dos Usos e Porcentagens")
         
-        # COLUNA 1: USOS E PORCENTAGENS
         c1, c2 = st.columns([1, 1])
         with c1:
             st.subheader("Finalidades")
-            
-            # Linha 1
             uc1, pc1 = st.columns([3, 1])
             uso1 = uc1.text_input("Uso 1", "Consumo Humano")
             porc1 = pc1.number_input("% Uso 1", 0, 100, 100, key="p1")
             
-            # Linha 2
             uc2, pc2 = st.columns([3, 1])
             uso2 = uc2.text_input("Uso 2", "Limpeza Geral")
             porc2 = pc2.number_input("% Uso 2", 0, 100, 0, key="p2")
             
-            # Linha 3
             uc3, pc3 = st.columns([3, 1])
             uso3 = uc3.text_input("Uso 3", "Combate a Incêndios")
             porc3 = pc3.number_input("% Uso 3", 0, 100, 0, key="p3")
             
-            # Linha 4
             uc4, pc4 = st.columns([3, 1])
             uso4 = uc4.text_input("Uso 4", "")
             porc4 = pc4.number_input("% Uso 4", 0, 100, 0, key="p4")
 
-            # Validação simples
             total_porc = porc1 + porc2 + porc3 + porc4
             if total_porc != 100 and total_porc != 0:
-                st.warning(f"⚠️ A soma das porcentagens está em {total_porc}%. Ideal seria 100%.")
+                st.warning(f"⚠️ Soma: {total_porc}%. Ideal: 100%.")
 
-        # COLUNA 2: ASSISTENTE DE TEXTO INTELIGENTE
         with c2:
             st.subheader("Assistente de Justificativa")
-            st.info("Selecione o tipo principal para gerar o cálculo e o texto:")
-            
             tipo = st.selectbox("Tipo de Demanda:", 
-                              ["Personalizado", 
-                               "Consumo Humano", 
-                               "Abastecimento Público", 
-                               "Limpeza Geral",
-                               "Combate a Incêndios",
-                               "Irrigação", 
-                               "Dessedentação Animal"])
+                              ["Personalizado", "Consumo Humano", "Abastecimento Público", 
+                               "Limpeza Geral", "Combate a Incêndios", "Irrigação", "Dessedentação Animal"])
             
             sugestao = ""
-            
-            # LÓGICA DE CÁLCULO POPULACIONAL (0,18 m³/hab/dia)
             if tipo == "Consumo Humano":
-                n_pessoas = st.number_input("Número de Pessoas (Residentes/Usuários)", min_value=1, value=4)
+                n_pessoas = st.number_input("Nº Pessoas", min_value=1, value=4)
                 vol_pessoas = n_pessoas * 0.18
                 sugestao = (f"A demanda justifica-se pela necessidade de abastecimento contínuo e potável para atendimento "
                             f"das necessidades básicas de {n_pessoas} pessoas, totalizando um consumo estimado de "
                             f"{format_padrao(vol_pessoas)} m³/dia (considerando 0,18 m³/hab/dia), visando a segurança hídrica e sanitária.")
-            
             elif tipo == "Abastecimento Público":
                 n_pessoas = st.number_input("População Atendida", min_value=1, value=50)
                 vol_pessoas = n_pessoas * 0.18
                 sugestao = (f"O poço destina-se ao abastecimento público, viabilizado pela administração municipal para "
                             f"atendimento da localidade. Estima-se o atendimento de {n_pessoas} habitantes, "
                             f"gerando uma demanda de {format_padrao(vol_pessoas)} m³/dia (base 0,18 m³/hab/dia).")
-            
             elif tipo == "Limpeza Geral":
                 sugestao = ("A demanda justifica-se pela necessidade de manutenção e operacionalização básica do empreendimento, "
                             "incluindo a limpeza geral das instalações, banheiros e pátios, garantindo as condições de higiene.")
-
             elif tipo == "Combate a Incêndios":
                 sugestao = ("A demanda justifica-se pela necessidade de abastecimento e manutenção da reserva técnica de incêndio (RTI), "
                             "visando a adequação do estabelecimento às normas de segurança e prevenção (PPCI), garantindo a proteção da edificação e dos usuários.")
-            
             elif tipo == "Irrigação":
                 sugestao = ("A demanda justifica-se pela necessidade de irrigação complementar para incremento da produtividade "
                             "agrícola, garantindo o desenvolvimento das culturas mesmo em períodos de estiagem.")
-            
             elif tipo == "Dessedentação Animal":
                 sugestao = ("A demanda justifica-se para a dessedentação animal, garantindo o bem-estar e o desenvolvimento "
                             "do rebanho, bem como as condições sanitárias das instalações.")
             
-            justificativa = st.text_area("Texto Final (Editável):", value=sugestao, height=200)
+            justificativa = st.text_area("Texto Final:", value=sugestao, height=200)
 
     with tab3:
         st.header("Gerar Documentos")
         
-        # --- PREPARAÇÃO DOS GRÁFICOS ---
         buffer_reb = io.BytesIO()
         fig1.savefig(buffer_reb, format='png', dpi=150)
         buffer_reb.seek(0)
@@ -248,7 +249,6 @@ if uploaded_file:
             fig2.savefig(buffer_rec, format='png', dpi=150)
             buffer_rec.seek(0)
 
-        # Contexto Base
         ctx_base = {
             'cliente': cliente, 'municipio': municipio,
             'ne': format_padrao(ne), 'nd': format_padrao(nd_final),
@@ -256,12 +256,10 @@ if uploaded_file:
             'transmissividade': format_transmissividade(T_reb_h),
         }
 
-        # --- BOTÃO 1: MEMORIAL ---
         if st.button("📄 Baixar Memorial (.docx)"):
             try:
                 doc = DocxTemplate("template_memorial.docx")
                 ctx = ctx_base.copy()
-                
                 img_reb_obj = InlineImage(doc, buffer_reb, width=Mm(150))
                 if buffer_rec:
                     img_rec_obj = InlineImage(doc, buffer_rec, width=Mm(150))
@@ -280,7 +278,6 @@ if uploaded_file:
                     'ce_rec': format_cap_especifica(cap_esp_rec),
                     'grafico_recuperacao': img_rec_obj
                 })
-                
                 doc.render(ctx)
                 bio = io.BytesIO()
                 doc.save(bio)
@@ -290,12 +287,10 @@ if uploaded_file:
 
         st.divider()
 
-        # --- BOTÃO 2: PROJETO ---
         if st.button("📄 Baixar Projeto (.docx)"):
             try:
                 doc_proj = DocxTemplate("template_projeto.docx")
                 ctx_proj = ctx_base.copy()
-                
                 ctx_proj.update({
                     'modelo_bomba': modelo_bomba,
                     'potencia': potencia, 'estagios': num_estagios,
@@ -304,16 +299,12 @@ if uploaded_file:
                     'submergencia': format_padrao(submergencia),
                     'tempo': f"{tempo_op}",
                     'q_dia': format_padrao(vazao_diaria),
-                    
-                    # USOS E PORCENTAGENS
                     'uso1': uso1, 'porc1': str(porc1),
                     'uso2': uso2, 'porc2': str(porc2),
                     'uso3': uso3, 'porc3': str(porc3),
                     'uso4': uso4, 'porc4': str(porc4),
-                    
                     'justificativa': justificativa
                 })
-                
                 doc_proj.render(ctx_proj)
                 bio_proj = io.BytesIO()
                 doc_proj.save(bio_proj)
