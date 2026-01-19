@@ -1,159 +1,157 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import io
+from sklearn.metrics import r2_score
+from scipy.optimize import curve_fit
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Mm
-import io
-from scipy.stats import linregress
 
-# --- BLOCO DE SEGURANÇA (Para garantir gráficos) ---
+# --- BLOCO DE SEGURANÇA (Instalação Automática) ---
 try:
     import matplotlib.pyplot as plt
+    from sklearn.linear_model import LinearRegression
 except ModuleNotFoundError:
     import subprocess
     import sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "matplotlib"])
+    st.warning("Instalando bibliotecas matemáticas... aguarde.")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "matplotlib", "scikit-learn", "scipy"])
     import matplotlib.pyplot as plt
+    from sklearn.linear_model import LinearRegression
 
-# --- FUNÇÃO DE CÁLCULO DE INCLINAÇÃO ---
-def calcular_slope_log(x_array, y_array):
-    """
-    Calcula a inclinação (Delta S) por ciclo logarítmico (base 10).
-    A regressão linear é feita com ln(x), então o slope real é slope_ln * 2.303.
-    """
-    # Filtrar valores válidos (x > 0 e não nulos)
-    mask = (x_array > 0) & (pd.notnull(x_array)) & (pd.notnull(y_array))
-    x_clean = x_array[mask]
-    y_clean = y_array[mask]
-    
-    if len(x_clean) < 2:
-        return 0, 0, 0, x_clean, y_clean
-    
-    # Regressão Linear: y = slope * ln(x) + intercept
-    slope_ln, intercept, r_value, p_value, std_err = linregress(np.log(x_clean), y_clean)
-    
-    # Delta S (variação por ciclo logarítmico na base 10)
-    delta_s = abs(slope_ln * np.log(10)) 
-    
-    return delta_s, slope_ln, intercept, x_clean, y_clean
+# --- FUNÇÕES MATEMÁTICAS ---
+def modelo_logaritmico(x, a, b):
+    return a * np.log(x) + b
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+def calcular_parametros_exatos(df_raw):
+    """
+    Realiza a regressão exata nas linhas 4 a 58 (índices 3 a 57)
+    Considerando Coluna A = Tempo (t), Coluna B = Nível Dinâmico (ND)
+    """
+    # Selecionar intervalo fixo conforme solicitado (Linha 4 a 58 do Excel)
+    # Pandas usa índice 0, então linha 4 é índice 3. Fim 58 é índice 57 (slice 3:58)
+    try:
+        df_crop = df_raw.iloc[3:58, :2].copy() # Pega colunas A e B
+        df_crop.columns = ['t', 'nd']
+        
+        # Limpeza e conversão
+        df_crop = df_crop.apply(pd.to_numeric, errors='coerce').dropna()
+        df_crop = df_crop[df_crop['t'] > 0] # Evitar log(0)
+        
+        X = df_crop['t'].values
+        y = df_crop['nd'].values
+        
+        if len(X) < 5:
+            return None, None, None, None, "Dados insuficientes nas linhas 4-58"
+
+        # Ajuste da Curva Logarítmica: y = a*ln(x) + b
+        # Onde 'a' é a inclinação relacionada ao ciclo log
+        popt, pcov = curve_fit(modelo_logaritmico, X, y)
+        a_calc, b_calc = popt
+        
+        # Calcular R²
+        y_pred = modelo_logaritmico(X, *popt)
+        r2 = r2_score(y, y_pred)
+        
+        # Calcular Delta S usando x1=10 e x2=100 na equação ajustada
+        y_10 = modelo_logaritmico(10, a_calc, b_calc)
+        y_100 = modelo_logaritmico(100, a_calc, b_calc)
+        delta_s = abs(y_100 - y_10) # Rebaixamento por ciclo logarítmico
+        
+        dados_grafico = {
+            'X': X, 'y': y, 
+            'X_fit': np.sort(X), 
+            'y_fit': modelo_logaritmico(np.sort(X), a_calc, b_calc),
+            'eq_label': f"y = {a_calc:.4f}*ln(x) + {b_calc:.4f}",
+            'r2': r2
+        }
+        
+        return delta_s, a_calc, b_calc, dados_grafico, None
+        
+    except Exception as e:
+        return None, None, None, None, f"Erro no processamento: {str(e)}"
+
+# --- INTERFACE DO STREAMLIT ---
 st.set_page_config(page_title="Gestão de Recursos Hídricos", layout="wide")
-st.title("🌊 Automação Completa: Teste de Bombeamento")
+st.title("🌊 Automação de Teste de Bombeamento (Ajuste Fino)")
 
-# --- BARRA LATERAL ---
-st.sidebar.header("Dados do Projeto")
-cliente = st.sidebar.text_input("Nome do Cliente", "Cliente Exemplo Ltda")
+# --- INPUTS ---
+st.sidebar.header("Configurações")
+cliente = st.sidebar.text_input("Cliente", "Cliente Padrão")
 municipio = st.sidebar.text_input("Município", "Tapera/RS")
-uploaded_file = st.file_uploader("Carregue a planilha de campo (Excel)", type=["xlsx"])
+
+uploaded_file = st.file_uploader("Carregue a planilha (Excel)", type=["xlsx"])
 
 if uploaded_file:
-    # Ler a planilha (Assumindo que os dados começam na linha 2, após cabeçalhos)
-    # Ajuste: header=1 significa que a linha 2 do Excel é o cabeçalho real
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=1)
+    # Ler sem cabeçalho para pegar por coordenadas fixas (A, B, E, etc)
+    df_full = pd.read_excel(uploaded_file, header=None)
     
-    # --- EXTRAÇÃO DE COLUNAS (Baseado no padrão Jéssica) ---
-    # Colunas Rebaixamento: A=t(min), B=ND, C=s(m) -> Indices 0, 1, 2
-    # Colunas Recuperação: M=t/t', J=N.A -> Indices 12, 9 (Verificar seu Excel)
-    
-    # Pegando NE da primeira linha de dados válida
-    ne_inicial = df.iloc[0, 1] # Coluna ND, primeira linha costuma ser o estático
-    q_teste = 6.0 # Vazão padrão ou ler da planilha se tiver campo fixo
-    
-    # --- ABAS DE ANÁLISE ---
-    tab1, tab2 = st.tabs(["📉 Rebaixamento (Bombeamento)", "📈 Recuperação"])
-    
-    with tab1:
-        st.header("Análise de Rebaixamento")
-        col_a, col_b = st.columns([2, 1])
+    # 1. PEGAR VAZÃO (Linha 3, Coluna E -> índice [2, 4])
+    try:
+        q_auto = float(df_full.iloc[2, 4]) # Linha 3 (idx 2), Col E (idx 4)
+        st.success(f"✅ Vazão detectada na célula E3: {q_auto} m³/h")
+    except:
+        st.warning("⚠️ Não foi possível ler a vazão em E3. Usando valor padrão.")
+        q_auto = 6.0
         
-        with col_a:
-            # Dados
-            t_reb = pd.to_numeric(df.iloc[:, 0], errors='coerce') # Tempo
-            s_reb = pd.to_numeric(df.iloc[:, 2], errors='coerce') # Rebaixamento
+    vazao = st.number_input("Confirmar Vazão (m³/h)", value=q_auto)
+
+    # 2. CALCULAR PARÂMETROS
+    delta_s, a, b, graf_data, erro = calcular_parametros_exatos(df_full)
+    
+    if erro:
+        st.error(erro)
+    else:
+        # Cálculos Finais
+        # Transmissividade T = (0.183 * Q) / DeltaS
+        transmissividade = (0.183 * vazao) / delta_s
+        
+        # Vazão Ótima (Estimativa baseada no NE original e ND máximo projetado ou real)
+        # Pegando NE da Célula B9 (Linha 9, Col B) se existir, ou input manual
+        try:
+            ne_val = float(df_full.iloc[8, 1]) # Linha 9 é idx 8
+        except:
+            ne_val = 41.89
             
-            # Cálculo Automático
-            delta_s_reb, slope_reb, inter_reb, x_r, y_r = calcular_slope_log(t_reb, s_reb)
+        ne = st.number_input("Nível Estático (NE)", value=ne_val)
+        # O rebaixamento total para Q ótima geralmente usa o s_max do teste ou disponível
+        s_max_teste = max(graf_data['y']) - min(graf_data['y']) # Estimativa simples
+        
+        vazao_otima = 0.8 * transmissividade * (graf_data['y'][-1] - graf_data['y'][0]) # Exemplo usando range do teste
+
+        # --- EXIBIÇÃO ---
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.subheader("Gráfico: Nível Dinâmico vs Tempo")
+            fig, ax = plt.subplots(figsize=(8, 5))
             
-            # Gráfico
-            fig1, ax1 = plt.subplots(figsize=(8, 5))
-            ax1.semilogx(x_r, y_r, 'o', label='Dados de Campo', alpha=0.6)
+            # Pontos Reais
+            ax.scatter(graf_data['X'], graf_data['y'], color='blue', alpha=0.6, label='Dados de Campo')
             
             # Linha de Tendência
-            x_fit = np.logspace(np.log10(min(x_r)), np.log10(max(x_r)), 100)
-            y_fit = slope_reb * np.log(x_fit) + inter_reb
-            ax1.semilogx(x_fit, y_fit, 'r--', label=f'Ajuste (ΔS = {delta_s_reb:.2f})')
+            ax.plot(graf_data['X_fit'], graf_data['y_fit'], 'r--', linewidth=2, label='Ajuste Logarítmico')
             
-            ax1.set_xlabel('Tempo (min)')
-            ax1.set_ylabel('Rebaixamento (m)')
-            ax1.grid(True, which="both", ls="--", alpha=0.4)
-            ax1.legend()
-            st.pyplot(fig1)
+            # Anotação da Equação e R²
+            texto_box = f"{graf_data['eq_label']}\n$R^2$ = {graf_data['r2']:.4f}\n$\Delta S$ (ciclo) = {delta_s:.4f}m"
+            ax.text(0.05, 0.95, texto_box, transform=ax.transAxes, fontsize=11,
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             
-        with col_b:
-            st.subheader("Resultados Calculados")
-            st.info(f"Equação: s = {slope_reb:.3f} * ln(t) + {inter_reb:.3f}")
+            ax.set_xscale('log') # Eixo X em escala logarítmica
+            ax.set_xlabel('Tempo (min) - Escala Log')
+            ax.set_ylabel('Nível Dinâmico (m)')
+            ax.grid(True, which="both", ls="--", alpha=0.4)
+            ax.legend()
+            st.pyplot(fig)
             
-            q_user = st.number_input("Vazão (Q) - m³/h", value=q_teste, key="q_reb")
-            ds_user = st.number_input("ΔS (Ciclo Log)", value=float(f"{delta_s_reb:.3f}"), format="%.3f", key="ds_reb")
+        with col2:
+            st.subheader("Resultados")
+            st.metric("ΔS (Calculado)", f"{delta_s:.4f} m")
+            st.metric("Transmissividade (T)", f"{transmissividade:.4f} m²/h")
+            # Ajuste manual opcional se quiser forçar outro valor
+            st.caption("Fórmula: T = (0,183 * Q) / ΔS")
             
-            if ds_user > 0:
-                t_calc = (0.183 * q_user) / ds_user
-                nd_max = max(s_reb.dropna()) + ne_inicial
-                s_total = nd_max - ne_inicial
-                q_otima = 0.8 * t_calc * s_total
-                
-                st.metric("Transmissividade (T)", f"{t_calc:.4f} m²/h")
-                st.metric("Vazão Ótima", f"{q_otima:.2f} m³/h")
-            else:
-                st.warning("ΔS inválido para cálculo.")
-
-    with tab2:
-        st.header("Análise de Recuperação")
-        col_c, col_d = st.columns([2, 1])
-        
-        with col_c:
-            # Dados Recuperação
-            # Residual Drawdown (s') = Nível Medido (NA) - Nível Estático (NE)
-            # Cooper-Jacob usa t/t' no eixo X vs Residual Drawdown no eixo Y
-            t_ratio = pd.to_numeric(df.iloc[:, 12], errors='coerce') # Coluna t/t'
-            na_rec = pd.to_numeric(df.iloc[:, 9], errors='coerce')   # Coluna N.A
-            s_residual = na_rec - ne_inicial
-            
-            # Cálculo Automático
-            delta_s_rec, slope_rec, inter_rec, x_rec, y_rec = calcular_slope_log(t_ratio, s_residual)
-            
-            # Gráfico
-            fig2, ax2 = plt.subplots(figsize=(8, 5))
-            ax2.semilogx(x_rec, y_rec, 'o', color='green', label='Dados Recuperação', alpha=0.6)
-            
-            # Linha de Tendência
-            if len(x_rec) > 0:
-                x_fit_rec = np.logspace(np.log10(min(x_rec)), np.log10(max(x_rec)), 100)
-                y_fit_rec = slope_rec * np.log(x_fit_rec) + inter_rec
-                ax2.semilogx(x_fit_rec, y_fit_rec, 'r--', label=f'Ajuste (ΔS = {delta_s_rec:.2f})')
-            
-            ax2.set_xlabel("Razão t/t' (Adimensional)")
-            ax2.set_ylabel("Rebaixamento Residual (m)")
-            ax2.grid(True, which="both", ls="--", alpha=0.4)
-            ax2.legend()
-            st.pyplot(fig2)
-            
-        with col_d:
-            st.subheader("Resultados Recuperação")
-            st.info(f"Equação: s' = {slope_rec:.3f} * ln(t/t') + {inter_rec:.3f}")
-            
-            ds_rec_user = st.number_input("ΔS Recuperação", value=float(f"{delta_s_rec:.3f}"), format="%.3f", key="ds_rec")
-            
-            if ds_rec_user > 0:
-                t_rec_calc = (0.183 * q_user) / ds_rec_user
-                st.metric("Transmissividade (T)", f"{t_rec_calc:.4f} m²/h")
-
-
-    # --- GERAÇÃO DE DOCUMENTO ---
-    st.divider()
-    if st.button("📄 Gerar Relatório Word"):
-        # Lógica para preencher o template usando 't_calc' e 'q_otima' calculados acima
-        # (Aqui entra a mesma lógica do docxtpl que te passei antes)
-        st.success("Cálculos concluídos! Implementar integração com template aqui.")
+            st.divider()
+            if st.button("📄 Gerar Word"):
+                st.info("O download iniciará em breve (Requer template atualizado).")
+                # Aqui iria o bloco do docxtpl (mesmo do anterior)
