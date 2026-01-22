@@ -27,7 +27,6 @@ def format_cap_especifica(valor):
 
 def gerar_excel_cabecalho(dados):
     """Gera um buffer Excel com os dados do cabeçalho organizados"""
-    # Organização visual em 3 blocos de colunas para ficar igual ao layout
     data = [
         ["IDENTIFICAÇÃO", "", "DATAS", "", "DADOS TÉCNICOS", ""],
         ["Cliente:", dados['cliente'], "Data Início:", dados['data_ini'], "Nível Estático:", f"{dados['ne']} m"],
@@ -38,6 +37,7 @@ def gerar_excel_cabecalho(dados):
     df = pd.DataFrame(data)
     
     output = io.BytesIO()
+    # Usa o engine 'openpyxl' que já está no requirements
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, header=False, sheet_name='Cabeçalho')
     output.seek(0)
@@ -207,5 +207,24 @@ if uploaded_file:
     submergencia = prof_bomba - nd_final
 
     # ================= FORMATAÇÃO =================
+    # AQUI ESTAVA O ERRO ANTERIOR (LINHA 211) - AGORA CORRIGIDO
     df_bomb_clean = df_full.iloc[3:58, 0:4].copy()
-    df_bomb_clean.columns = ["t (min)", "N.D (m)", "s (m)", "
+    df_bomb_clean.columns = ["t (min)", "N.D (m)", "s (m)", "r (m)"]
+    df_bomb_clean = df_bomb_clean.apply(pd.to_numeric, errors='coerce')
+    df_bomb_fmt = df_bomb_clean.map('{:.2f}'.format).replace('nan', '-')
+
+    df_rec_clean = df_full.iloc[3:58, 6:13].copy()
+    df_rec_clean.columns = ["t'", "t", "ND", "NA", "r'", "s'", "t/t'"]
+    df_rec_clean = df_rec_clean.apply(pd.to_numeric, errors='coerce')
+    df_rec_fmt = df_rec_clean.map('{:.2f}'.format).replace('nan', '-')
+
+    # --- TABS ---
+    tab1, tab2, tab3 = st.tabs(["📊 Dados do Teste", "📝 Usos e Demandas", "📥 Downloads"])
+    
+    with tab1:
+        st.markdown("### 📋 Resumo do Teste de Bombeamento")
+        dados_cabecalho = {
+            'cliente': cliente, 'municipio': municipio, 'aquifero': aquifero, 'execucao': execucao,
+            'data_ini': data_inicio.strftime('%d/%m/%Y'), 'data_fim': data_fim.strftime('%d/%m/%Y'),
+            'prof': profundidade_poco, 'crivo': crivo_bomba,
+            'ne': f"{ne
