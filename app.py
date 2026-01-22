@@ -227,4 +227,4 @@ if uploaded_file:
             'cliente': cliente, 'municipio': municipio, 'aquifero': aquifero, 'execucao': execucao,
             'data_ini': data_inicio.strftime('%d/%m/%Y'), 'data_fim': data_fim.strftime('%d/%m/%Y'),
             'prof': profundidade_poco, 'crivo': crivo_bomba,
-            'ne': f"{ne
+            'ne': f"{ne}
