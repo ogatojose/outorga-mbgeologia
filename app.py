@@ -9,7 +9,7 @@ from docx.shared import Mm
 import io
 from datetime import timedelta, date
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES AUXILIARES ---
 def modelo_logaritmico(x, a, b):
     return a * np.log(x) + b
 
@@ -25,22 +25,36 @@ def format_cap_especifica(valor):
     if valor is None: return "-"
     return f"{valor:.6f}".replace('.', ',')
 
-def gerar_imagem_tabela(df, titulo):
-    """Converte DataFrame em imagem PNG (Versão Estreita para Lado a Lado)"""
-    # Altura dinâmica baseada no número de linhas
-    altura = max(2, len(df) * 0.25 + 1.5)
+def gerar_excel_cabecalho(dados):
+    """Gera um buffer Excel com os dados do cabeçalho organizados"""
+    # Organização visual em 3 blocos de colunas para ficar igual ao layout
+    data = [
+        ["IDENTIFICAÇÃO", "", "DATAS", "", "DADOS TÉCNICOS", ""],
+        ["Cliente:", dados['cliente'], "Data Início:", dados['data_ini'], "Nível Estático:", f"{dados['ne']} m"],
+        ["Município:", dados['municipio'], "Data Fim:", dados['data_fim'], "Nível Dinâmico:", f"{dados['nd']} m"],
+        ["Aquífero:", dados['aquifero'], "Profundidade:", f"{dados['prof']} m", "Vazão:", f"{dados['q']} m³/h"],
+        ["Execução:", dados['execucao'], "Crivo:", f"{dados['crivo']} m", "Tempo Bomb.:", dados['tempo']]
+    ]
+    df = pd.DataFrame(data)
     
-    # LARGURA REDUZIDA PARA 4.5 POLEGADAS (Formato coluna estreita)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, header=False, sheet_name='Cabeçalho')
+    output.seek(0)
+    return output
+
+def gerar_imagem_tabela(df, titulo):
+    """Converte DataFrame em imagem PNG (Versão Estreita)"""
+    altura = max(2, len(df) * 0.25 + 1.5)
     fig, ax = plt.subplots(figsize=(4.5, altura)) 
     
     ax.axis('off')
     ax.set_title(titulo, fontweight="bold", fontsize=11, pad=10)
     
-    # Criar tabela
     tabela = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
     tabela.auto_set_font_size(False)
     tabela.set_fontsize(9)
-    tabela.scale(1.0, 1.3) # Ajuste de escala para caber bem
+    tabela.scale(1.0, 1.3)
     
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
@@ -49,18 +63,15 @@ def gerar_imagem_tabela(df, titulo):
 
 def gerar_imagem_cabecalho(dados):
     """Gera uma imagem com os dados do cabeçalho"""
-    fig, ax = plt.subplots(figsize=(10, 4.5)) # Levemente mais alto
+    fig, ax = plt.subplots(figsize=(10, 4.5))
     ax.axis('off')
     
-    # Borda
     rect = plt.Rectangle((0.01, 0.01), 0.98, 0.98, fill=False, color="black", lw=1.5)
     ax.add_patch(rect)
     
-    # Título
     ax.text(0.5, 0.9, "RESUMO TÉCNICO - TESTE DE BOMBEAMENTO", 
             ha='center', va='center', fontsize=14, fontweight='bold')
     
-    # Linha
     ax.plot([0.05, 0.95], [0.82, 0.82], color='black', lw=0.5)
 
     # Coluna 1
@@ -195,221 +206,6 @@ if uploaded_file:
 
     submergencia = prof_bomba - nd_final
 
-    # ================= FORMATAÇÃO DAS TABELAS =================
-    # Bombeamento
+    # ================= FORMATAÇÃO =================
     df_bomb_clean = df_full.iloc[3:58, 0:4].copy()
-    df_bomb_clean.columns = ["t (min)", "N.D (m)", "s (m)", "r (m)"]
-    df_bomb_clean = df_bomb_clean.apply(pd.to_numeric, errors='coerce')
-    df_bomb_fmt = df_bomb_clean.map('{:.2f}'.format).replace('nan', '-')
-
-    # Recuperação
-    df_rec_clean = df_full.iloc[3:58, 6:13].copy()
-    df_rec_clean.columns = ["t'", "t", "ND", "NA", "r'", "s'", "t/t'"]
-    df_rec_clean = df_rec_clean.apply(pd.to_numeric, errors='coerce')
-    df_rec_fmt = df_rec_clean.map('{:.2f}'.format).replace('nan', '-')
-
-    # --- TABS ---
-    tab1, tab2, tab3 = st.tabs(["📊 Dados do Teste", "📝 Usos e Demandas", "📥 Downloads"])
-    
-    with tab1:
-        st.markdown("### 📋 Resumo do Teste de Bombeamento")
-        dados_cabecalho = {
-            'cliente': cliente, 'municipio': municipio, 'aquifero': aquifero, 'execucao': execucao,
-            'data_ini': data_inicio.strftime('%d/%m/%Y'), 'data_fim': data_fim.strftime('%d/%m/%Y'),
-            'prof': profundidade_poco, 'crivo': crivo_bomba,
-            'ne': f"{ne:.2f}", 'nd': f"{nd_final:.2f}", 'q': f"{q:.2f}", 'tempo': tempo_bombeamento
-        }
-        
-        # Gera e mostra cabeçalho
-        img_cabecalho_buf = gerar_imagem_cabecalho(dados_cabecalho)
-        st.image(img_cabecalho_buf, use_container_width=True)
-        st.download_button("⬇️ Baixar Cabeçalho (PNG)", img_cabecalho_buf, f"cabecalho_{cliente}.png", "image/png")
-
-        st.divider()
-
-        c_graf, c_res = st.columns([2, 1])
-        with c_graf:
-            fig1, ax1 = plt.subplots(figsize=(8, 4))
-            ax1.scatter(df_reb['t'], df_reb['nd'], color='navy', s=20)
-            if a_reb is not None:
-                x_fit = np.logspace(np.log10(min(df_reb['t'])), np.log10(max(df_reb['t'])), 100)
-                y_fit = modelo_logaritmico(x_fit, a_reb, b_reb)
-                ax1.plot(x_fit, y_fit, 'r--')
-            ax1.set_xscale('log')
-            ax1.set_xlabel('Tempo (min)')
-            ax1.set_ylabel('Nível (m)')
-            ax1.invert_yaxis()
-            ax1.grid(True, ls="--", alpha=0.4)
-            st.pyplot(fig1)
-        
-        with c_res:
-            st.metric("Transmissividade (T)", f"{T_reb_h:.9f} m²/h")
-            st.metric("Cap. Específica", f"{cap_esp_reb:.6f} m³/h/m")
-
-        st.divider()
-
-        st.subheader("📷 Tabelas Formatadas")
-        c_tab1, c_tab2 = st.columns(2)
-        with c_tab1:
-            st.markdown("**Bombeamento**")
-            st.dataframe(df_bomb_fmt, height=300, use_container_width=True)
-            img_bomb = gerar_imagem_tabela(df_bomb_fmt, f"Bombeamento") # Título curto p/ imagem estreita
-            st.download_button("⬇️ Baixar Tabela Bombeamento", img_bomb, f"tabela_bombeamento_{cliente}.png", "image/png")
-
-        with c_tab2:
-            st.markdown("**Recuperação**")
-            st.dataframe(df_rec_fmt, height=300, use_container_width=True)
-            img_rec = gerar_imagem_tabela(df_rec_fmt, f"Recuperação")
-            st.download_button("⬇️ Baixar Tabela Recuperação", img_rec, f"tabela_recuperacao_{cliente}.png", "image/png")
-
-    with tab2:
-        st.header("Definição dos Usos e Porcentagens")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.subheader("Finalidades")
-            uc1, pc1 = st.columns([3, 1])
-            uso1 = uc1.text_input("Uso 1", "Consumo Humano")
-            porc1 = pc1.number_input("% Uso 1", 0, 100, 100, key="p1")
-            uc2, pc2 = st.columns([3, 1])
-            uso2 = uc2.text_input("Uso 2", "Limpeza Geral")
-            porc2 = pc2.number_input("% Uso 2", 0, 100, 0, key="p2")
-            uc3, pc3 = st.columns([3, 1])
-            uso3 = uc3.text_input("Uso 3", "Combate a Incêndios")
-            porc3 = pc3.number_input("% Uso 3", 0, 100, 0, key="p3")
-            uc4, pc4 = st.columns([3, 1])
-            uso4 = uc4.text_input("Uso 4", "")
-            porc4 = pc4.number_input("% Uso 4", 0, 100, 0, key="p4")
-
-        with c2:
-            st.subheader("Assistente de Justificativa")
-            tipo = st.selectbox("Tipo de Demanda:", 
-                              ["Personalizado", "Consumo Humano", "Abastecimento Público", 
-                               "Limpeza Geral", "Combate a Incêndios", "Irrigação", "Dessedentação Animal"])
-            
-            sugestao = ""
-            if tipo == "Consumo Humano":
-                n_pessoas = st.number_input("Nº Pessoas", min_value=1, value=4)
-                vol_pessoas = n_pessoas * 0.18
-                sugestao = (f"A demanda justifica-se pela necessidade de abastecimento contínuo e potável para atendimento "
-                            f"das necessidades básicas de {n_pessoas} pessoas, totalizando um consumo estimado de "
-                            f"{format_padrao(vol_pessoas)} m³/dia (considerando 0,18 m³/hab/dia), visando a segurança hídrica e sanitária.")
-            elif tipo == "Abastecimento Público":
-                n_pessoas = st.number_input("População Atendida", min_value=1, value=50)
-                vol_pessoas = n_pessoas * 0.18
-                sugestao = (f"O poço destina-se ao abastecimento público, viabilizado pela administração municipal para "
-                            f"atendimento da localidade. Estima-se o atendimento de {n_pessoas} habitantes, "
-                            f"gerando uma demanda de {format_padrao(vol_pessoas)} m³/dia (base 0,18 m³/hab/dia).")
-            elif tipo == "Limpeza Geral":
-                sugestao = ("A demanda justifica-se pela necessidade de manutenção e operacionalização básica do empreendimento, "
-                            "incluindo a limpeza geral das instalações, banheiros e pátios, garantindo as condições de higiene.")
-            elif tipo == "Combate a Incêndios":
-                sugestao = ("A demanda justifica-se pela necessidade de abastecimento e manutenção da reserva técnica de incêndio (RTI), "
-                            "visando a adequação do estabelecimento às normas de segurança e prevenção (PPCI), garantindo a proteção da edificação e dos usuários.")
-            elif tipo == "Irrigação":
-                sugestao = ("A demanda justifica-se pela necessidade de irrigação complementar para incremento da produtividade "
-                            "agrícola, garantindo o desenvolvimento das culturas mesmo em períodos de estiagem.")
-            elif tipo == "Dessedentação Animal":
-                sugestao = ("A demanda justifica-se para a dessedentação animal, garantindo o bem-estar e o desenvolvimento "
-                            "do rebanho, bem como as condições sanitárias das instalações.")
-            
-            justificativa = st.text_area("Texto Final:", value=sugestao, height=200)
-
-    with tab3:
-        st.header("Gerar Documentos")
-        
-        # PREPARAÇÃO
-        buffer_reb = io.BytesIO()
-        fig1.savefig(buffer_reb, format='png', dpi=150)
-        buffer_reb.seek(0)
-        
-        buffer_rec = None
-        if not df_rec.empty:
-            fig2, ax2 = plt.subplots(figsize=(8, 4))
-            ax2.scatter(df_rec['ratio'], df_rec['res'], color='green', s=20)
-            if a_rec is not None:
-                 x_fit2 = np.logspace(np.log10(min(df_rec['ratio'])), np.log10(max(df_rec['ratio'])), 100)
-                 y_fit2 = modelo_logaritmico(x_fit2, a_rec, b_rec)
-                 ax2.plot(x_fit2, y_fit2, 'r--')
-            ax2.set_xscale('log')
-            ax2.invert_yaxis()
-            ax2.grid(True, ls="--", alpha=0.4)
-            buffer_rec = io.BytesIO()
-            fig2.savefig(buffer_rec, format='png', dpi=150)
-            buffer_rec.seek(0)
-
-        # Resetar ponteiros para leitura no Word
-        img_cabecalho_buf.seek(0)
-        img_bomb.seek(0)
-        img_rec.seek(0)
-
-        ctx_base = {
-            'cliente': cliente, 'municipio': municipio,
-            'ne': format_padrao(ne), 'nd': format_padrao(nd_final),
-            'q': format_padrao(q), 's_total': format_padrao(s_total),
-            'transmissividade': format_transmissividade(T_reb_h),
-        }
-
-        if st.button("📄 Baixar Memorial (.docx)"):
-            try:
-                doc = DocxTemplate("template_memorial.docx")
-                ctx = ctx_base.copy()
-                img_reb_obj = InlineImage(doc, buffer_reb, width=Mm(150))
-                img_rec_obj = InlineImage(doc, buffer_rec, width=Mm(150)) if buffer_rec else "N/A"
-
-                ctx.update({
-                    'ds_linha': format_padrao(ds_reb),
-                    't_reb_s': format_transmissividade(T_reb_s),
-                    'ce_reb': format_cap_especifica(cap_esp_reb),
-                    'vazao_otima': format_padrao(vazao_otima),
-                    'grafico_rebaixamento': img_reb_obj,
-                    'ds_rec': format_padrao(ds_rec),
-                    't_rec_h': format_transmissividade(T_rec_h),
-                    't_rec_s': format_transmissividade(T_rec_s),
-                    'ce_rec': format_cap_especifica(cap_esp_rec),
-                    'grafico_recuperacao': img_rec_obj
-                })
-                doc.render(ctx)
-                bio = io.BytesIO()
-                doc.save(bio)
-                st.download_button("⬇️ Download Memorial", bio.getvalue(), f"Memorial_{cliente}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-            except Exception as e:
-                st.error(f"Erro no Memorial: {e}")
-
-        st.divider()
-
-        if st.button("📄 Baixar Projeto (.docx)"):
-            try:
-                doc_proj = DocxTemplate("template_projeto.docx")
-                ctx_proj = ctx_base.copy()
-                
-                # INSERÇÃO DAS IMAGENS: CABEÇALHO GRANDE, TABELAS ESTREITAS (LADO A LADO)
-                img_cabecalho_word = InlineImage(doc_proj, img_cabecalho_buf, width=Mm(160))
-                # Aqui definimos width=80mm (aprox metade da página) para caberem juntas na tabela invisível do Word
-                img_bomb_word = InlineImage(doc_proj, img_bomb, width=Mm(80)) 
-                img_rec_word = InlineImage(doc_proj, img_rec, width=Mm(80))
-
-                ctx_proj.update({
-                    'modelo_bomba': modelo_bomba,
-                    'potencia': potencia, 'estagios': num_estagios,
-                    'diametro_edutor': diametro_edutor,
-                    'prof_bomba': format_padrao(prof_bomba),
-                    'submergencia': format_padrao(submergencia),
-                    'tempo': f"{tempo_op}",
-                    'q_dia': format_padrao(vazao_diaria),
-                    'uso1': uso1, 'porc1': str(porc1),
-                    'uso2': uso2, 'porc2': str(porc2),
-                    'uso3': uso3, 'porc3': str(porc3),
-                    'uso4': uso4, 'porc4': str(porc4),
-                    'justificativa': justificativa,
-                    
-                    # IMAGENS
-                    'img_cabecalho': img_cabecalho_word,
-                    'img_tabela_bomb': img_bomb_word,
-                    'img_tabela_rec': img_rec_word
-                })
-                doc_proj.render(ctx_proj)
-                bio_proj = io.BytesIO()
-                doc_proj.save(bio_proj)
-                st.download_button("⬇️ Download Projeto", bio_proj.getvalue(), f"Projeto_{cliente}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-            except Exception as e:
-                st.error(f"Erro no Projeto: {e}")
+    df_bomb_clean.columns = ["t (min)", "N.D (m)", "s (m)", "
